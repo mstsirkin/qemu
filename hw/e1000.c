@@ -236,8 +236,13 @@ static void e1000_reset(void *opaque)
 static void
 set_ctrl(E1000State *s, int index, uint32_t val)
 {
-    /* RST is self clearing */
-    s->mac_reg[CTRL] = val & ~E1000_CTRL_RST;
+    if (val & E1000_CTRL_RST) {
+        e1000_reset(s);
+        qemu_set_irq(s->dev.irq[0], 0);
+        return;
+    }
+
+    s->mac_reg[CTRL] = val;
 }
 
 static void
