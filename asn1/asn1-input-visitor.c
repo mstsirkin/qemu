@@ -88,19 +88,21 @@ static uint64_t asn1_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
     byte = qemu_get_byte(qfile);
     aiv->cur_pos++;
 
-    if (byte == ASN1_LENGTH_INDEFINITE) {
-        *is_indefinite = true;
+    if (byte == BER_LENGTH_INDEFINITE) {
+        *is_indefinite = false;
         return 0;
     }
 
-    if (0 == (byte & ASN1_LENGTH_LONG)) {
+    if (!(byte & BER_LENGTH_LONG)) {
         len = byte;
     } else {
         int_len = byte & ASN1_LENGTH_MASK;
         if (int_len > 8) {
+            /* Length can be up to 127 byte, but it seems
+             * safe to assume any input will be < 1TB in length. */
             error_set(errp, QERR_INVALID_PARAMETER,
-                      "ASN.1 integer length field > 8");
-            return 0;
+                      "ASN.1 integer length field %d > 8", int_len);
+            return ~0x0ULL;
         }
         for (c = 0; c < int_len; c++) {
             len <<= 8;
@@ -121,7 +123,7 @@ static void asn1_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
 
     /* skip length bytes */
     while (to_skip > 0) {
-        skip = (to_skip > sizeof(buf)) ? sizeof(buf) : to_skip;
+        skip = MIN(to_skip, sizeof(buf));
         if (qemu_get_buffer(aiv->qfile, buf, skip) != skip) {
             error_set(errp, QERR_STREAM_ENDED);
             return;
@@ -130,12 +132,12 @@ static void asn1_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
     }
 }
 
-static void asn1_skip_until_eoc(Asn1InputVisitor *aiv, unsigned nesting,
-                                Error **errp)
+static void asn1_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
 {
     uint8_t asn1_type;
     uint64_t length;
     bool is_indefinite;
+    uint64_t indefinite_nesting = 0;
 
     while ((*errp) == NULL) {
         asn1_type = asn1_read_type(aiv, errp);
@@ -147,30 +149,42 @@ static void asn1_skip_until_eoc(Asn1InputVisitor *aiv, unsigned nesting,
         if (*errp) {
             return;
         }
-        if (asn1_type == ASN1_TYPE_EOC) {
-            if (length == 0) {
-#ifdef ASN1_DEBUG
-                fprintf(stderr, "found end! nesting=%d, pos=%lu\n",
-                        nesting, aiv->cur_pos);
-#endif
+        if (asn1_type == BER_TYPE_EOC) {
+            // TODO: set errp
+            if (length) {
+                error_set(errp, QERR_INVALID_PARAMETER,
+                          "ASN.1 EOC length field is invalid");
                 return;
             }
-            error_set(errp, QERR_INVALID_PARAMETER,
-                      "ASN.1 EOC length field is invalid");
-            return;
-        }
-        if ((asn1_type & ASN1_TYPE_P_C_MASK)) {
-            /* constructed */
-            if (is_indefinite) {
-                asn1_skip_until_eoc(aiv, nesting+1, errp);
-            } else {
-                asn1_skip_bytes(aiv, length, errp);
+            if (!indefinite_nesting) {
+                error_set(errp, QERR_INVALID_PARAMETER,
+                          "ASN.1 EOC not within an indefinite length");
+                return;
             }
-        } else {
-            /* primitive */
 #ifdef ASN1_DEBUG
-            fprintf(stderr, "skipping an ia5string/int/bool of length "
-                    "%lu.\n", length);
+                fprintf(stderr, "found end! nesting=%" PRIdMAX ", pos=%lu\n",
+                        indefinite_nesting, aiv->cur_pos);
+#endif
+            if (!--indefinite_nesting) {
+                return;
+            }
+        }
+        if (is_indefinite) {
+            if ((asn1_type & BER_TYPE_P_C_MASK) == BER_TYPE_PRIMITIVE) {
+                error_set(errp, QERR_INVALID_PARAMETER,
+                          "ASN.1 indefinite length in a primitive type.");
+                return;
+            }
+            if (indefinite_nesting == ~0x0ULL) {
+                error_set(errp, QERR_INVALID_PARAMETER,
+                          "ASN.1 indefinite nesting level is too large.");
+                return;
+            }
+            ++indefinite_nesting;
+        } else {
+#ifdef ASN1_DEBUG
+            fprintf(stderr, "skipping type %x of length "
+                    "%lu.\n", asn1_type, length);
 #endif
             asn1_skip_bytes(aiv, length, errp);
         }
