@@ -24,6 +24,7 @@
 
 #include "qemu-common.h"
 #include "qemu_socket.h"
+#include "qemu-qsb.h"
 #include "hw/hw.h"
 
 #define IO_BUF_SIZE 32768
@@ -331,6 +332,12 @@ typedef struct QEMUFileSocket
     QEMUFile *file;
 } QEMUFileSocket;
 
+typedef struct QEMUBuffer
+{
+    QEMUSizedBuffer *qsb;
+    QEMUFile *file;
+} QEMUBuffer;
+
 static int socket_get_buffer(void *opaque, uint8_t *buf, int64_t pos, int size)
 {
     QEMUFileSocket *s = opaque;
@@ -472,6 +479,81 @@ QEMUFile *qemu_fopen_socket(int fd)
     s->fd = fd;
     s->file = qemu_fopen_ops(s, NULL, socket_get_buffer, socket_close, 
 			     NULL, NULL, NULL);
+    return s->file;
+}
+
+static int buf_get_buffer(void *opaque, uint8_t *buf, int64_t pos, int size)
+{
+    QEMUBuffer *s = opaque;
+    ssize_t len = qsb_get_length(s->qsb) - pos;
+
+    if (len <= 0) {
+        return 0;
+    }
+
+    if (len > size) {
+        len = size;
+    }
+    memcpy(buf, qsb_get_buffer(s->qsb, pos), len);
+
+    return len;
+}
+
+static int buf_put_buffer(void *opaque, const uint8_t *buf,
+                          int64_t pos, int size)
+{
+    QEMUBuffer *s = opaque;
+
+    return qsb_write_at(s->qsb, buf, pos, size);
+}
+
+static int buf_close(void *opaque)
+{
+    QEMUBuffer *s = opaque;
+
+    qsb_free(s->qsb);
+
+    g_free(s);
+
+    return 0;
+}
+
+const QEMUSizedBuffer *qemu_buf_get(QEMUFile *f)
+{
+    QEMUBuffer *p;
+
+    qemu_fflush(f);
+
+    p = (QEMUBuffer *)f->opaque;
+
+    return p->qsb;
+}
+
+QEMUFile *qemu_bufopen(const char *mode, QEMUSizedBuffer *input)
+{
+    QEMUBuffer *s;
+
+    if (mode == NULL || (mode[0] != 'r' && mode[0] != 'w') || mode[1] != 0) {
+        fprintf(stderr, "qemu_bufopen: Argument validity check failed\n");
+        return NULL;
+    }
+
+    s = g_malloc0(sizeof(QEMUBuffer));
+    if (mode[0] == 'r') {
+        s->qsb = input;
+    }
+
+    if (s->qsb == NULL) {
+        s->qsb = qsb_create(NULL, 0);
+    }
+
+    if(mode[0] == 'r') {
+        s->file = qemu_fopen_ops(s, NULL, buf_get_buffer, buf_close,
+				 NULL, NULL, NULL);
+    } else {
+        s->file = qemu_fopen_ops(s, buf_put_buffer, NULL, buf_close,
+				 NULL, NULL, NULL);
+    }
     return s->file;
 }
 

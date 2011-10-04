@@ -53,6 +53,8 @@ QEMUFile *qemu_fdopen(int fd, const char *mode);
 QEMUFile *qemu_fopen_socket(int fd);
 QEMUFile *qemu_popen(FILE *popen_file, const char *mode);
 QEMUFile *qemu_popen_cmd(const char *command, const char *mode);
+QEMUFile *qemu_bufopen(const char *mode, QEMUSizedBuffer *input);
+const QEMUSizedBuffer *qemu_buf_get(QEMUFile *f);
 int qemu_stdio_fd(QEMUFile *f);
 void qemu_fflush(QEMUFile *f);
 int qemu_fclose(QEMUFile *f);
