@@ -371,4 +371,16 @@ static inline uint64_t muldiv64(uint64_t a, uint32_t b, uint32_t c)
 
 #include "module.h"
 
+/* qemu-qsb.h */
+#include "qemu-qsb.h"
+QEMUSizedBuffer *qsb_create(const uint8_t *buffer, uint64_t len);
+QEMUSizedBuffer *qsb_clone(const QEMUSizedBuffer *);
+void qsb_free(QEMUSizedBuffer *);
+uint64_t qsb_get_length(const QEMUSizedBuffer *qsb);
+const unsigned char *qsb_get_buffer(const QEMUSizedBuffer *, int64_t pos);
+int qsb_write_at(QEMUSizedBuffer *qsb, const uint8_t *buf,
+                 int64_t pos, int size);
+int qsb_append_qsb(QEMUSizedBuffer *dest, const QEMUSizedBuffer *src);
+int qsb_append(QEMUSizedBuffer *dest, const uint8_t *buffer, uint64_t len);
+
 #endif
