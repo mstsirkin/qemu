@@ -21,6 +21,7 @@ typedef struct Asn1InputVisitor Asn1InputVisitor;
 
 Asn1InputVisitor *asn1_input_visitor_new(QEMUFile *);
 void asn1_input_visitor_cleanup(Asn1InputVisitor *v);
+uint64_t asn1_input_get_parser_position(Asn1InputVisitor *v);
 
 Visitor *asn1_input_get_visitor(Asn1InputVisitor *v);
 

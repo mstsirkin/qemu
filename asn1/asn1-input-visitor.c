@@ -12,12 +12,6 @@
  *
  */
 
-/*
- * TODO:
- * - read type tag via function
- * - reading of constructed IA5Strings (etc) that need to be reassembled
- */
-
 #include "asn1-input-visitor.h"
 #include "qemu-queue.h"
 #include "qemu-common.h"
@@ -27,16 +21,18 @@
 
 #define AIV_STACK_SIZE 1024
 
+/*#define ASN1_DEBUG*/
+
 typedef struct StackEntry
 {
-    uint32_t cur_pos;
+    uint64_t cur_pos;
 } StackEntry;
 
 struct Asn1InputVisitor
 {
     Visitor visitor;
     QEMUFile *qfile;
-    uint32_t cur_pos;
+    uint64_t cur_pos;
     StackEntry stack[AIV_STACK_SIZE];
     int nb_stack;
 };
@@ -47,7 +43,7 @@ static Asn1InputVisitor *to_aiv(Visitor *v)
 }
 
 static void asn1_input_push(Asn1InputVisitor *aiv,
-                            uint32_t cur_pos, Error **errp)
+                            uint64_t cur_pos, Error **errp)
 {
     aiv->stack[aiv->nb_stack].cur_pos = cur_pos;
     aiv->nb_stack++;
@@ -58,7 +54,7 @@ static void asn1_input_push(Asn1InputVisitor *aiv,
     }
 }
 
-static uint32_t asn1_input_pop(Asn1InputVisitor *aiv, Error **errp)
+static uint64_t asn1_input_pop(Asn1InputVisitor *aiv, Error **errp)
 {
     aiv->nb_stack--;
 
@@ -70,23 +66,37 @@ static uint32_t asn1_input_pop(Asn1InputVisitor *aiv, Error **errp)
     return aiv->stack[aiv->nb_stack].cur_pos;
 }
 
-static uint64_t asn1_read_length(QEMUFile *qfile, uint32_t *bytes_read,
+static uint8_t asn1_read_type(Asn1InputVisitor *aiv, Error **errp)
+{
+    uint8_t type;
+
+    type = qemu_get_byte(aiv->qfile);
+    aiv->cur_pos ++;
+
+    return type;
+}
+
+static uint64_t asn1_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
                                  Error **errp)
 {
     uint8_t byte, c, int_len;
     uint64_t len = 0;
+    QEMUFile *qfile = aiv->qfile;
 
-    *bytes_read = 1;
+    *is_indefinite = false;
 
     byte = qemu_get_byte(qfile);
+    aiv->cur_pos++;
+
     if (byte == ASN1_LENGTH_INDEFINITE) {
-        return byte;
+        *is_indefinite = true;
+        return 0;
     }
 
-    if (0 == (byte & BER_LENGTH_LONG)) {
+    if (0 == (byte & ASN1_LENGTH_LONG)) {
         len = byte;
     } else {
-        int_len = byte & BER_LENGTH_MASK;
+        int_len = byte & ASN1_LENGTH_MASK;
         if (int_len > 8) {
             error_set(errp, QERR_INVALID_PARAMETER,
                       "ASN.1 integer length field > 8");
@@ -96,7 +106,7 @@ static uint64_t asn1_read_length(QEMUFile *qfile, uint32_t *bytes_read,
             len <<= 8;
             len = qemu_get_byte(qfile);
         }
-        *bytes_read += int_len;
+        aiv->cur_pos += int_len;
     }
 
     return len;
@@ -113,8 +123,7 @@ static void asn1_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
     while (to_skip > 0) {
         skip = (to_skip > sizeof(buf)) ? sizeof(buf) : to_skip;
         if (qemu_get_buffer(aiv->qfile, buf, skip) != skip) {
-            // FIXME: Set error code
-            //error_set(errp, "Stream ended early.\n");
+            error_set(errp, QERR_STREAM_ENDED);
             return;
         }
         to_skip -= skip;
@@ -124,72 +133,93 @@ static void asn1_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
 static void asn1_skip_until_eoc(Asn1InputVisitor *aiv, unsigned nesting,
                                 Error **errp)
 {
-    uint8_t id;
+    uint8_t asn1_type;
     uint64_t length;
-    uint32_t bytes_read;
+    bool is_indefinite;
 
     while ((*errp) == NULL) {
-        id = qemu_get_byte(aiv->qfile);
-        aiv->cur_pos ++;
-        length = asn1_read_length(aiv->qfile, &bytes_read, errp);
+        asn1_type = asn1_read_type(aiv, errp);
         if (*errp) {
             return;
         }
-        aiv->cur_pos += bytes_read;
-        fprintf(stderr,"%s: found id: 0x%02x, len = %lu\n",
-                __func__, id, length);
-        if (id == ASN1_TYPE_EOC) {
+
+        length = asn1_read_length(aiv, &is_indefinite, errp);
+        if (*errp) {
+            return;
+        }
+        if (asn1_type == ASN1_TYPE_EOC) {
             if (length == 0) {
-                fprintf(stderr, "found end! %u\n", aiv->cur_pos);
+#ifdef ASN1_DEBUG
+                fprintf(stderr, "found end! nesting=%d, pos=%lu\n",
+                        nesting, aiv->cur_pos);
+#endif
                 return;
             }
             error_set(errp, QERR_INVALID_PARAMETER,
                       "ASN.1 EOC length field is invalid");
             return;
         }
-        if ((id & BER_TYPE_P_C_MASK)) {
+        if ((asn1_type & ASN1_TYPE_P_C_MASK)) {
             /* constructed */
-            if (length == ASN1_LENGTH_INDEFINITE) {
+            if (is_indefinite) {
                 asn1_skip_until_eoc(aiv, nesting+1, errp);
             } else {
                 asn1_skip_bytes(aiv, length, errp);
             }
         } else {
             /* primitive */
+#ifdef ASN1_DEBUG
             fprintf(stderr, "skipping an ia5string/int/bool of length "
                     "%lu.\n", length);
+#endif
             asn1_skip_bytes(aiv, length, errp);
         }
     }
 }
 
-static void asn1_input_start_constructed(Visitor *v, uint8_t asn1_type,
+static void asn1_input_start_constructed(Visitor *v, uint8_t exp_asn1_type,
                                    void **obj,
                                    const char *kind, const char *name,
                                    size_t size, Error **errp)
 {
     Asn1InputVisitor *aiv = to_aiv(v);
-    int byte;
+    uint8_t asn1_type;
     int64_t len;
-    uint32_t bytes_for_len;
+    bool is_indefinite;
 
-    byte = qemu_get_byte(aiv->qfile);
-    if (byte != asn1_type) {
-        // FIXME
-        error_set(errp, QERR_INVALID_PARAMETER_TYPE, name ? name : "a",
-                  "b");
-        return;
-    }
-    len = asn1_read_length(aiv->qfile, &bytes_for_len, errp);
+    asn1_type = asn1_read_type(aiv, errp);
     if (*errp) {
         return;
     }
 
-    if (len != ASN1_LENGTH_INDEFINITE) {
+    if ((asn1_type & 0x1f) != exp_asn1_type) {
+        error_set(errp, QERR_INVALID_PARAMETER_TYPE,
+                  asn1_type_to_str(asn1_type),
+                  asn1_type_to_str(exp_asn1_type));
+        return;
+    }
+
+    if ((asn1_type & ASN1_TYPE_P_C_MASK) == 0) {
+        error_set(errp, QERR_INVALID_PARAMETER_TYPE,
+                  "primitive type",
+                  "constructed type");
+        return;
+    }
+
+    len = asn1_read_length(aiv, &is_indefinite, errp);
+    if (*errp) {
+        return;
+    }
+
+    if (!is_indefinite) {
+#ifdef ASN1_DEBUG
         fprintf(stderr, "structure/set len: %li\n", len);
-        asn1_input_push(aiv, aiv->cur_pos + 1 + bytes_for_len + len, errp);
+#endif
+        asn1_input_push(aiv, aiv->cur_pos + len, errp);
     } else {
+#ifdef ASN1_DEBUG
         fprintf(stderr, "indefinite length encoding!\n");
+#endif
         asn1_input_push(aiv, 0, errp);
     }
 
@@ -197,32 +227,36 @@ static void asn1_input_start_constructed(Visitor *v, uint8_t asn1_type,
         return;
     }
 
-    /* only allocating buffer once at the very beginning; assuming
-       embedded structures/sets otherwise */
-    if (aiv->cur_pos == 0) {
+    if (*obj == NULL) {
         *obj = g_malloc0(size);
+#ifdef ASN1_DEBUG
+        fprintf(stderr, "for type '%s' allocated buffer at %p, size = %lu\n",
+                asn1_type_to_str(asn1_type), *obj, size);
+#endif
         if (*obj == NULL) {
-            // FIXME: Set error code
+            error_set(errp, QERR_OUT_OF_MEMORY);
             return;
         }
     }
-
-    aiv->cur_pos += 1 + bytes_for_len;
 }
 
 static void asn1_input_end_constructed(Visitor *v, Error **errp)
 {
-    uint32_t new_pos;
+    uint64_t new_pos;
     Asn1InputVisitor *aiv = to_aiv(v);
 
     new_pos = asn1_input_pop(aiv, errp);
 
     if (new_pos != 0) {
-        fprintf(stderr, "new_pos = %d\n", new_pos);
+#ifdef ASN1_DEBUG
+        fprintf(stderr, "new_pos = %lu\n", new_pos);
+#endif
         aiv->cur_pos = new_pos;
     } else {
+#ifdef ASN1_DEBUG
         fprintf(stderr, "searching for end...\n");
-        fprintf(stderr, "cur_pos = %u\n", aiv->cur_pos);
+        fprintf(stderr, "cur_pos = %lu\n", aiv->cur_pos);
+#endif
         asn1_skip_until_eoc(aiv, 0, errp);
     }
 }
@@ -257,36 +291,130 @@ static void asn1_input_end_array(Visitor *v, Error **errp)
     asn1_input_end_constructed(v, errp);
 }
 
-static void asn1_input_type_int(Visitor *v, int64_t *obj, const char *name,
-                                Error **errp)
+static void asn1_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
+                               bool is_signed, Error **errp)
 {
     Asn1InputVisitor *aiv = to_aiv(v);
     uint8_t asn1_type;
-    uint32_t bytes_for_len;
+    bool is_indefinite;
     uint64_t len;
+    uint64_t val = 0;
     int c;
 
-    asn1_type = qemu_get_byte(aiv->qfile);
+#ifdef ASN1_DEBUG
+    fprintf(stderr,"reading int to %p\n", obj);
+#endif
 
-    fprintf(stderr,"%s: got type: 0x%02x, expected 0x%02x\n",
-            __func__, asn1_type, ASN1_TYPE_INTEGER);
-
-    if (asn1_type != ASN1_TYPE_INTEGER) {
-        error_set(errp, QERR_INVALID_PARAMETER_TYPE, name ? name : "a",
-                  "b");
+    asn1_type = asn1_read_type(aiv, errp);
+    if (*errp) {
         return;
     }
-    len = asn1_read_length(aiv->qfile, &bytes_for_len, errp);
-    fprintf(stderr, "pos: %d int len: %li, bytes_for_len=%u\n",
-            aiv->cur_pos, len, bytes_for_len);
 
-    *obj = 0;
-    for (c = 0; c < len ; c++) {
-        *obj <<= 8;
-        *obj |= qemu_get_byte(aiv->qfile);
+#ifdef ASN1_DEBUG
+    fprintf(stderr,"%s: got type: 0x%02x, expected 0x%02x\n",
+            __func__, asn1_type, ASN1_TYPE_INTEGER);
+#endif
+
+    if (asn1_type != ASN1_TYPE_INTEGER) {
+        error_set(errp, QERR_INVALID_PARAMETER_TYPE,
+                  asn1_type_to_str(asn1_type),
+                  asn1_type_to_str(ASN1_TYPE_INTEGER));
+        return;
     }
-    aiv->cur_pos += 1 + bytes_for_len + len;
-    fprintf(stderr, "pos: %d int: %li\n", aiv->cur_pos, *obj);
+    len = asn1_read_length(aiv, &is_indefinite, errp);
+#ifdef ASN1_DEBUG
+    fprintf(stderr, "pos: %lu int len: %li\n",
+            aiv->cur_pos, len);
+#endif
+
+    if (is_indefinite || len > maxbytes) {
+        error_set(errp, QERR_INVALID_PARAMETER_VALUE,
+                  "ASN.1 bool int indicator is indefinite or too large",
+                  "[1..8]");
+        return;
+    }
+
+    for (c = 0; c < len ; c++) {
+        val <<= 8;
+        val |= qemu_get_byte(aiv->qfile);
+    }
+    aiv->cur_pos += len;
+    if (is_signed) {
+        while (true) {
+            if (len <= sizeof(int8_t)) {
+                val = (int64_t)(int8_t)val;
+                break;
+            }
+            if (len <= sizeof(int16_t)) {
+                val = (int64_t)(int16_t)val;
+                break;
+            }
+            if (len <= sizeof(int32_t)) {
+                val = (int64_t)(int32_t)val;
+                break;
+            }
+            break;
+        }
+    }
+#ifdef ASN1_DEBUG
+    fprintf(stderr, "pos: %lu int: %lx\n", aiv->cur_pos, val);
+#endif
+
+    memcpy(obj, &val, maxbytes);
+}
+
+static void asn1_input_type_int(Visitor *v, int64_t *obj, const char *name,
+                                Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+}
+
+static void asn1_input_type_uint8_t(Visitor *v, uint8_t *obj,
+                                    const char *name, Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+}
+
+static void asn1_input_type_uint16_t(Visitor *v, uint16_t *obj,
+                                     const char *name, Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+}
+
+static void asn1_input_type_uint32_t(Visitor *v, uint32_t *obj,
+                                     const char *name, Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+}
+
+static void asn1_input_type_uint64_t(Visitor *v, uint64_t *obj,
+                                     const char *name, Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+}
+
+static void asn1_input_type_int8_t(Visitor *v, int8_t *obj,
+                                   const char *name, Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+}
+
+static void asn1_input_type_int16_t(Visitor *v, int16_t *obj,
+                                    const char *name, Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+}
+
+static void asn1_input_type_int32_t(Visitor *v, int32_t *obj,
+                                    const char *name, Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+}
+
+static void asn1_input_type_int64_t(Visitor *v, int64_t *obj,
+                                    const char *name, Error **errp)
+{
+    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
 }
 
 static void asn1_input_type_bool(Visitor *v, bool *obj, const char *name,
@@ -294,68 +422,200 @@ static void asn1_input_type_bool(Visitor *v, bool *obj, const char *name,
 {
     Asn1InputVisitor *aiv = to_aiv(v);
     uint8_t asn1_type;
-    uint32_t bytes_for_len;
+    bool is_indefinite;
     uint64_t len;
 
-    asn1_type = qemu_get_byte(aiv->qfile);
-    if (asn1_type != ASN1_TYPE_BOOLEAN) {
-        error_set(errp, QERR_INVALID_PARAMETER_TYPE, name ? name : "?",
-                  "bool");
+    asn1_type = asn1_read_type(aiv, errp);
+    if (*errp) {
         return;
     }
-    len = asn1_read_length(aiv->qfile, &bytes_for_len, errp);
-    fprintf(stderr, "pos: %d bool len: %li, bytes_for_len=%u\n",
-            aiv->cur_pos, len, bytes_for_len);
 
-    if (len != 1) {
+    if (asn1_type != ASN1_TYPE_BOOLEAN) {
+        error_set(errp, QERR_INVALID_PARAMETER_TYPE,
+                  asn1_type_to_str(asn1_type),
+                  asn1_type_to_str(ASN1_TYPE_BOOLEAN));
+        return;
+    }
+    len = asn1_read_length(aiv, &is_indefinite, errp);
+#ifdef ASN1_DEBUG
+    fprintf(stderr, "pos: %lu bool len: %li\n",
+            aiv->cur_pos, len);
+#endif
+
+    if (is_indefinite || len != 1) {
         error_set(errp, QERR_INVALID_PARAMETER_VALUE,
-                  "ASN.1 bool length indicator",
+                  "ASN.1 bool length indicator is indefinite or != 1",
                   "1");
         return;
     }
     *obj = qemu_get_byte(aiv->qfile);
-    aiv->cur_pos += 1 + bytes_for_len + len;
-    fprintf(stderr, "pos: %d bool: %d\n", aiv->cur_pos, *obj);
+    aiv->cur_pos += len;
+
+#ifdef ASN1_DEBUG
+    fprintf(stderr, "pos: %lu bool: %d\n", aiv->cur_pos, *obj);
+#endif
+}
+
+/* Function for recursive reading of fragmented primitives */
+static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
+                                    uint8_t exp_asn1_type,
+                                    uint8_t **buffer, uint32_t *buffer_len,
+                                    uint32_t offset, uint32_t nesting,
+                                    bool indefinite, uint64_t max_pos,
+                                    const char *name, Error **errp)
+{
+    uint8_t asn1_type;
+    uint32_t bytes_read = 0;
+    bool is_indefinite;
+    uint64_t len;
+
+    assert((exp_asn1_type & ASN1_TYPE_CONSTRUCTED) == 0);
+
+    asn1_type = asn1_read_type(aiv, errp);
+    if (*errp) {
+        return 0;
+    }
+
+    if ((asn1_type & ~ASN1_TYPE_CONSTRUCTED) != exp_asn1_type) {
+        error_set(errp, QERR_INVALID_PARAMETER_TYPE, name ? name : "?",
+                  "string");
+        return 0;
+    }
+
+    if ((asn1_type & ASN1_TYPE_CONSTRUCTED)) {
+        len = asn1_read_length(aiv, &is_indefinite, errp);
+#ifdef ASN1_DEBUG
+        fprintf(stderr, "pos: %lu string len: %li\n",
+                aiv->cur_pos, len);
+#endif
+
+        if (*errp) {
+            return 0;
+        }
+
+        if (!is_indefinite) {
+            if ((*buffer) == NULL) {
+                /* allocate buffer once; due to the ASN.1 overhead it
+                 * will be bigger than what we need */
+                *buffer = g_malloc0(len);
+                if ((*buffer) == NULL) {
+                    error_set(errp, QERR_OUT_OF_MEMORY);
+                    return 0;
+                }
+                *buffer_len = len;
+            }
+        }
+        bytes_read += asn1_input_fragment(aiv, exp_asn1_type,
+                                          buffer, buffer_len,
+                                          offset, nesting + 1, is_indefinite,
+                                          aiv->cur_pos + len, name, errp);
+        return bytes_read;
+    }
+
+    while (true) {
+        /* not-constructed case */
+        len = asn1_read_length(aiv, &is_indefinite, errp);
+#ifdef ASN1_DEBUG
+        fprintf(stderr, "pos: %lu string len: %li\n",
+                aiv->cur_pos, len);
+#endif
+        if (is_indefinite) {
+            error_set(errp, QERR_INVALID_PARAMETER,
+                      "Got indefinite type length in primitve type");
+            g_free(*buffer);
+            *buffer = NULL;
+            return 0;
+        }
+
+        if (offset + len > *buffer_len) {
+            *buffer = g_realloc(*buffer, offset + len);
+            *buffer_len = offset + len;
+        }
+
+        if (qemu_get_buffer(aiv->qfile,
+                            &((uint8_t *)*buffer)[offset], len) != len) {
+            error_set(errp, QERR_STREAM_ENDED);
+            g_free(*buffer);
+            *buffer = NULL;
+            return 0;
+        }
+
+        offset += len;
+        bytes_read += len;
+
+        aiv->cur_pos += len;
+#ifdef ASN1_DEBUG
+        fprintf(stderr, "pos: %lu string: %s\n", aiv->cur_pos, *buffer);
+#endif
+
+        if (nesting == 0) {
+            break;
+        }
+
+        /* indefinite length case: loop until we encounter EOC */
+        if (indefinite) {
+            uint8_t byte = qemu_get_byte(aiv->qfile);
+            aiv->cur_pos++;
+
+            if (byte == ASN1_TYPE_EOC) {
+                byte = qemu_get_byte(aiv->qfile);
+                aiv->cur_pos++;
+
+                if (byte != 0) {
+                    error_set(errp, QERR_INVALID_PARAMETER,
+                              "ASN.1 EOC length field is invalid");
+                    g_free(*buffer);
+                    *buffer = NULL;
+                    return 0;
+                }
+                return bytes_read;
+            }
+
+            if (byte != exp_asn1_type) {
+                error_set(errp, QERR_INVALID_PARAMETER,
+                          "ASN.1 type field is wrong");
+                g_free(*buffer);
+                *buffer = NULL;
+                return 0;
+            }
+            continue;
+        }
+
+        /* may never step beyond max_pos */
+        assert(aiv->cur_pos <= max_pos);
+
+        /* in definite length coding case caller tells us how far to read */
+        if (aiv->cur_pos == max_pos) {
+            return bytes_read;
+        }
+
+        bytes_read += asn1_input_fragment(aiv, exp_asn1_type,
+                                          buffer, buffer_len,
+                                          offset, nesting,
+                                          indefinite, max_pos, name, errp);
+        break;
+    }
+    return bytes_read;
 }
 
 static void asn1_input_type_str(Visitor *v, char **obj, const char *name,
                                 Error **errp)
 {
     Asn1InputVisitor *aiv = to_aiv(v);
-    uint8_t asn1_type;
-    uint32_t bytes_for_len;
-    uint64_t len;
+    uint32_t buffer_len = 0;
 
-    // FIXME: call function to read fragmented parts
-
-    asn1_type = qemu_get_byte(aiv->qfile);
-    if ((asn1_type & 0x1f) != ASN1_TYPE_IA5STRING) {
-        error_set(errp, QERR_INVALID_PARAMETER_TYPE, name ? name : "?",
-                  "string");
-        return;
-    }
-    len = asn1_read_length(aiv->qfile, &bytes_for_len, errp);
-    fprintf(stderr, "pos: %d string len: %li, bytes_for_len=%u\n",
-            aiv->cur_pos, len, bytes_for_len);
-
-    *obj = g_malloc(len+1);
-    if (*obj == NULL) {
-        error_set(errp, "Out of memory.\n");
-        return;
-    }
-    if (qemu_get_buffer(aiv->qfile, (uint8_t *)*obj, len) != len) {
-        //error_set(errp, "Stream ended early.\n");
-        return;
-    }
-    (*obj)[len] = 0;
-
-    aiv->cur_pos += 1 + bytes_for_len + len;
-    fprintf(stderr, "pos: %d string: %s\n", aiv->cur_pos, *obj);
+    asn1_input_fragment(aiv, ASN1_TYPE_IA5_STRING, (uint8_t**)obj, &buffer_len,
+                        0, 0, false, 0, name, errp);
 }
 
 Visitor *asn1_input_get_visitor(Asn1InputVisitor *v)
 {
     return &v->visitor;
+}
+
+uint64_t asn1_input_get_parser_position(Asn1InputVisitor *v)
+{
+    return v->cur_pos;
 }
 
 void asn1_input_visitor_cleanup(Asn1InputVisitor *v)
@@ -375,6 +635,14 @@ Asn1InputVisitor *asn1_input_visitor_new(QEMUFile *qfile)
     v->visitor.next_array = asn1_input_next_array;
     v->visitor.end_array = asn1_input_end_array;
     v->visitor.type_int = asn1_input_type_int;
+    v->visitor.type_uint8_t = asn1_input_type_uint8_t;
+    v->visitor.type_uint16_t = asn1_input_type_uint16_t;
+    v->visitor.type_uint32_t = asn1_input_type_uint32_t;
+    v->visitor.type_uint64_t = asn1_input_type_uint64_t;
+    v->visitor.type_int8_t = asn1_input_type_int8_t;
+    v->visitor.type_int16_t = asn1_input_type_int16_t;
+    v->visitor.type_int32_t = asn1_input_type_int32_t;
+    v->visitor.type_int64_t = asn1_input_type_int64_t;
     v->visitor.type_bool = asn1_input_type_bool;
     v->visitor.type_str = asn1_input_type_str;
 

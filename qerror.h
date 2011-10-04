@@ -196,4 +196,10 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_QGA_COMMAND_FAILED \
     "{ 'class': 'QgaCommandFailed', 'data': { 'message': %s } }"
 
+#define QERR_OUT_OF_MEMORY \
+    "{ 'class': 'OutOfMemoryError', 'data': {} }"
+
+#define QERR_STREAM_ENDED \
+    "{ 'class': 'StreamEndedError', 'data': {} }"
+
 #endif /* QERROR_H */

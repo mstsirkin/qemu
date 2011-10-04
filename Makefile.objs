@@ -409,7 +409,7 @@ qapi-obj-y = $(addprefix qapi/, $(qapi-nested-y))
 ######################################################################
 # asn1
 
-asn1-nested-y = asn1-input-visitor.o asn1-output-visitor.o
+asn1-nested-y = asn1-input-visitor.o asn1-output-visitor.o asn1-common.o
 asn1-obj-y = $(addprefix asn1/, $(asn1-nested-y))
 
 #qapi-obj-y += $(asn1-obj-y)

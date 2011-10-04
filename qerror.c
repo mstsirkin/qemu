@@ -234,6 +234,14 @@ static const QErrorStringTable qerror_table[] = {
         .error_fmt = QERR_QGA_COMMAND_FAILED,
         .desc      = "Guest agent command failed, error was '%(message)'",
     },
+    {
+        .error_fmt = QERR_OUT_OF_MEMORY,
+        .desc      = "Out of memory error",
+    },
+    {
+        .error_fmt = QERR_STREAM_ENDED,
+        .desc      = "Data stream ended",
+    },
     {}
 };
 
