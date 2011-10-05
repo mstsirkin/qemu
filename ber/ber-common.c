@@ -1,5 +1,5 @@
 /*
- * ASN.1 Common functions
+ * ASN.1 Basic Encoding Rules Common functions
  *
  * Copyright IBM, Corp. 2011
  *
