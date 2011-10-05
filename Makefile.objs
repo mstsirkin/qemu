@@ -407,12 +407,10 @@ qapi-nested-y += qmp-registry.o qmp-dispatch.o
 qapi-obj-y = $(addprefix qapi/, $(qapi-nested-y))
 
 ######################################################################
-# asn1
+# ber
 
-asn1-nested-y = asn1-input-visitor.o asn1-output-visitor.o asn1-common.o
-asn1-obj-y = $(addprefix asn1/, $(asn1-nested-y))
-
-#qapi-obj-y += $(asn1-obj-y)
+ber-nested-y = ber-input-visitor.o ber-output-visitor.o ber-common.o
+ber-obj-y = $(addprefix ber/, $(ber-nested-y))
 
 ######################################################################
 # guest agent

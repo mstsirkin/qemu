@@ -89,7 +89,7 @@ static uint64_t ber_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
     aiv->cur_pos++;
 
     if (byte == BER_LENGTH_INDEFINITE) {
-        *is_indefinite = false;
+        *is_indefinite = true;
         return 0;
     }
 
