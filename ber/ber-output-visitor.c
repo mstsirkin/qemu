@@ -211,12 +211,12 @@ static void ber_output_end_array(Visitor *v, Error **errp)
 }
 
 static void ber_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
-                            bool is_signed, Error **errp)
+                            Error **errp)
 {
     uint8_t buf[20];
     int shift =  (maxnumbytes - 1) * 8;
-    uint64_t mask = 0xFFULL << shift;
-    uint64_t exp = 0;
+    uint64_t mask = 0xFF80ULL << (shift - 8);
+    bool exp_zeros;
     int c = 0;
     Asn1OutputVisitor *aov = to_aov(v);
 
@@ -227,30 +227,20 @@ static void ber_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
 
     buf[0] = BER_TYPE_INTEGER;
 
-    if (is_signed) {
-        static uint64_t masks[] = {
-            0xFFFFFFFF80000000ULL,
-            0xFFFF8000,
-            0xFF80,
-        };
-        uint8_t sz = sizeof(uint32_t);
-        int i = 0;
-        while (i < 3) {
-            mask = masks[i++];
-            if (val < 0) {
-                exp = mask;
-            }
-            if (exp == (val & mask)) {
-                shift = (sz - 1) * 8;
+    if (maxnumbytes > 1) {
+        exp_zeros = ((mask & val) == 0) ? true : false;
+        while (mask != 0xFF) {
+            if (exp_zeros) {
+                if ((mask & val) != 0) {
+                    break;
+                }
             } else {
-                break;
+                if ((mask & val) != mask) {
+                    break;
+                }
             }
-            sz /= 2;
-        }
-    } else {
-        while (mask && (mask & val) == 0) {
-            mask >>= 8;
             shift -= 8;
+            mask >>= 8;
         }
     }
 
@@ -265,61 +255,61 @@ static void ber_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
 }
 
 static void ber_output_type_int(Visitor *v, int64_t *obj, const char *name,
-                                 Error **errp)
+                                Error **errp)
 {
-    ber_output_int(v, *obj, sizeof(*obj), true, errp);
+    ber_output_int(v, *obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_uint8_t(Visitor *v, uint8_t *obj,
-                                     const char *name, Error **errp)
+                                    const char *name, Error **errp)
 {
-    ber_output_int(v, *obj, sizeof(*obj), false, errp);
+    ber_output_int(v, *obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_uint16_t(Visitor *v, uint16_t *obj,
-                                      const char *name, Error **errp)
+                                     const char *name, Error **errp)
 {
-    ber_output_int(v, *obj, sizeof(*obj), false, errp);
+    ber_output_int(v, *obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_uint32_t(Visitor *v, uint32_t *obj,
-                                      const char *name, Error **errp)
+                                     const char *name, Error **errp)
 {
-    ber_output_int(v, *obj, sizeof(*obj), false, errp);
+    ber_output_int(v, *obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_uint64_t(Visitor *v, uint64_t *obj,
-                                      const char *name, Error **errp)
+                                     const char *name, Error **errp)
 {
-    ber_output_int(v, *obj, sizeof(*obj), false, errp);
+    ber_output_int(v, *obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_int8_t(Visitor *v, int8_t *obj,
-                                    const char *name, Error **errp)
+                                   const char *name, Error **errp)
 {
-    ber_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
+    ber_output_int(v, (int64_t)*obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_int16_t(Visitor *v, int16_t *obj,
-                                     const char *name, Error **errp)
+                                    const char *name, Error **errp)
 {
-    ber_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
+    ber_output_int(v, (int64_t)*obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_int32_t(Visitor *v, int32_t *obj,
-                                     const char *name, Error **errp)
+                                    const char *name, Error **errp)
 {
-    ber_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
+    ber_output_int(v, (int64_t)*obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_int64_t(Visitor *v, int64_t *obj,
-                                     const char *name, Error **errp)
+                                    const char *name, Error **errp)
 {
-    ber_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
+    ber_output_int(v, (int64_t)*obj, sizeof(*obj), errp);
 }
 
 static void ber_output_type_bool(Visitor *v, bool *obj, const char *name,
-                                  Error **errp)
+                                 Error **errp)
 {
     uint8_t buf[10];
     Asn1OutputVisitor *aov = to_aov(v);
@@ -338,8 +328,8 @@ static void ber_output_type_bool(Visitor *v, bool *obj, const char *name,
 }
 
 static void ber_output_fragment(Asn1OutputVisitor *aov, uint8_t ber_type,
-                                 uint32_t chunk_size, uint8_t *buffer,
-                                 uint32_t buflen, Error **errp)
+                                uint32_t chunk_size, uint8_t *buffer,
+                                uint32_t buflen, Error **errp)
 {
     uint32_t offset = 0;
     bool fragmented = (buflen > chunk_size);
@@ -374,7 +364,7 @@ static void ber_output_fragment(Asn1OutputVisitor *aov, uint8_t ber_type,
 }
 
 static void ber_output_type_str(Visitor *v, char **obj, const char *name,
-                                 Error **errp)
+                                Error **errp)
 {
     Asn1OutputVisitor *aov = to_aov(v);
 
@@ -409,7 +399,7 @@ Visitor *ber_output_get_visitor(Asn1OutputVisitor *v)
 }
 
 Asn1OutputVisitor *ber_output_visitor_new(QEMUFile *qfile,
-                                           enum QEMUAsn1Mode mode)
+                                          enum QEMUAsn1Mode mode)
 {
     Asn1OutputVisitor *v;
 

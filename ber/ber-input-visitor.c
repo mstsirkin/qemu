@@ -312,7 +312,7 @@ static void ber_input_end_array(Visitor *v, Error **errp)
 }
 
 static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
-                               bool is_signed, Error **errp)
+                               Error **errp)
 {
     Asn1InputVisitor *aiv = to_aiv(v);
     uint8_t ber_type;
@@ -357,25 +357,12 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
     for (c = 0; c < len ; c++) {
         val <<= 8;
         val |= qemu_get_byte(aiv->qfile);
-    }
-    aiv->cur_pos += len;
-    if (is_signed) {
-        while (true) {
-            if (len <= sizeof(int8_t)) {
-                val = (int64_t)(int8_t)val;
-                break;
-            }
-            if (len <= sizeof(int16_t)) {
-                val = (int64_t)(int16_t)val;
-                break;
-            }
-            if (len <= sizeof(int32_t)) {
-                val = (int64_t)(int32_t)val;
-                break;
-            }
-            break;
+        if (c == 0 && (val & 0x80) == 0x80) {
+            /* sign extend */
+            val |= 0xFFFFFFFFFFFFFF00ULL;
         }
     }
+    aiv->cur_pos += len;
 #ifdef BER_DEBUG
     fprintf(stderr, "pos: %" PRIu64 " int: %" PRIx64 "\n", aiv->cur_pos, val);
 #endif
@@ -386,55 +373,55 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
 static void ber_input_type_int(Visitor *v, int64_t *obj, const char *name,
                                 Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_uint8_t(Visitor *v, uint8_t *obj,
                                     const char *name, Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_uint16_t(Visitor *v, uint16_t *obj,
                                      const char *name, Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_uint32_t(Visitor *v, uint32_t *obj,
                                      const char *name, Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_uint64_t(Visitor *v, uint64_t *obj,
                                      const char *name, Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_int8_t(Visitor *v, int8_t *obj,
                                    const char *name, Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_int16_t(Visitor *v, int16_t *obj,
                                     const char *name, Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_int32_t(Visitor *v, int32_t *obj,
                                     const char *name, Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_int64_t(Visitor *v, int64_t *obj,
                                     const char *name, Error **errp)
 {
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
