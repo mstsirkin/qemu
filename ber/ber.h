@@ -23,14 +23,14 @@ typedef enum ber_type_class {
     BER_TYPE_CLASS_CONTENT_SPECIFIC = 0x2 << 6,
     BER_TYPE_CLASS_PRIVATE = 0x3 << 6,
     BER_TYPE_CLASS_MASK = 0x3 << 6 /* Mask to get class */
-} Asn1TypeClass;
+} BERTypeClass;
 
 /* P/C bit */
 typedef enum ber_type_p_c {
     BER_TYPE_PRIMITIVE = (0x0 << 5),
     BER_TYPE_CONSTRUCTED = (0x1 << 5),
     BER_TYPE_P_C_MASK = (0x1 << 5) /* Mask to get P/C bit */
-} Asn1TypePC;
+} BERTypePC;
 
 typedef enum ber_type_tag {
     BER_TYPE_EOC              /*  P        0       0*/,
@@ -66,7 +66,7 @@ typedef enum ber_type_tag {
     BER_TYPE_BMP_STRING       /*  P/C      30      1E*/,
     BER_TYPE_LONG_FORM        /*  -        31      1F*/,
     BER_TYPE_TAG_MASK = 0x1f /* Mask to get tag */
-} Asn1TypeTag;
+} BERTypeTag;
 
 typedef enum ber_length {
     /* Special length values */
@@ -77,7 +77,7 @@ typedef enum ber_length {
     BER_LENGTH_LONG = (0x1 << 7),
     BER_LENGTH_SHORT_LONG_MASK = (0x1 << 7),
     BER_LENGTH_MASK = 0x7F,
-} Asn1Length;
+} BERLength;
 
 enum QEMUBERMode {
   BER_MODE_BER = 1,
