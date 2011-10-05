@@ -68,8 +68,8 @@ static void visit_type_TestStruct_Skip(Visitor *v, TestStruct **obj,
 /* test core visitor methods */
 static void test_visitor_core(void)
 {
-    Asn1OutputVisitor *mo;
-    Asn1InputVisitor *mi;
+    BEROutputVisitor *mo;
+    BERInputVisitor *mi;
     Visitor *v;
     TestArray array[2] = {
         [0] =  {

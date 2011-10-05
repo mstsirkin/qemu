@@ -1,5 +1,5 @@
 /*
- * Output Visitor
+ * BER Output Visitor header
  *
  * Copyright IBM, Corp. 2011
  *
@@ -18,11 +18,11 @@
 #include "qapi/qapi-visit-core.h"
 #include "ber.h"
 
-typedef struct Asn1OutputVisitor Asn1OutputVisitor;
+typedef struct BEROutputVisitor BEROutputVisitor;
 
-Asn1OutputVisitor *ber_output_visitor_new(QEMUFile *, enum QEMUAsn1Mode mode);
-void ber_output_visitor_cleanup(Asn1OutputVisitor *v);
+BEROutputVisitor *ber_output_visitor_new(QEMUFile *, enum QEMUBERMode mode);
+void ber_output_visitor_cleanup(BEROutputVisitor *v);
 
-Visitor *ber_output_get_visitor(Asn1OutputVisitor *v);
+Visitor *ber_output_get_visitor(BEROutputVisitor *v);
 
 #endif

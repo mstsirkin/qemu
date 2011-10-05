@@ -1,5 +1,5 @@
 /*
- * ASN.1 Input Visitor
+ * BER Input Visitor
  *
  * Copyright IBM, Corp. 2011
  *
@@ -28,7 +28,7 @@ typedef struct StackEntry
     uint64_t cur_pos;
 } StackEntry;
 
-struct Asn1InputVisitor
+struct BERInputVisitor
 {
     Visitor visitor;
     QEMUFile *qfile;
@@ -37,13 +37,13 @@ struct Asn1InputVisitor
     int nb_stack;
 };
 
-static Asn1InputVisitor *to_aiv(Visitor *v)
+static BERInputVisitor *to_biv(Visitor *v)
 {
-    return container_of(v, Asn1InputVisitor, visitor);
+    return container_of(v, BERInputVisitor, visitor);
 }
 
-static void ber_input_push(Asn1InputVisitor *aiv,
-                            uint64_t cur_pos, Error **errp)
+static void ber_input_push(BERInputVisitor *aiv,
+                           uint64_t cur_pos, Error **errp)
 {
     aiv->stack[aiv->nb_stack].cur_pos = cur_pos;
     aiv->nb_stack++;
@@ -54,7 +54,7 @@ static void ber_input_push(Asn1InputVisitor *aiv,
     }
 }
 
-static uint64_t ber_input_pop(Asn1InputVisitor *aiv, Error **errp)
+static uint64_t ber_input_pop(BERInputVisitor *aiv, Error **errp)
 {
     aiv->nb_stack--;
 
@@ -66,7 +66,7 @@ static uint64_t ber_input_pop(Asn1InputVisitor *aiv, Error **errp)
     return aiv->stack[aiv->nb_stack].cur_pos;
 }
 
-static uint8_t ber_read_type(Asn1InputVisitor *aiv, Error **errp)
+static uint8_t ber_read_type(BERInputVisitor *aiv, Error **errp)
 {
     uint8_t type;
 
@@ -76,8 +76,8 @@ static uint8_t ber_read_type(Asn1InputVisitor *aiv, Error **errp)
     return type;
 }
 
-static uint64_t ber_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
-                                 Error **errp)
+static uint64_t ber_read_length(BERInputVisitor *aiv, bool *is_indefinite,
+                                Error **errp)
 {
     uint8_t byte, c, int_len;
     uint64_t len = 0;
@@ -116,8 +116,8 @@ static uint64_t ber_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
     return len;
 }
 
-static void ber_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
-                            Error **errp)
+static void ber_skip_bytes(BERInputVisitor *aiv, uint64_t to_skip,
+                           Error **errp)
 {
     uint8_t buf[1024];
     uint32_t skip;
@@ -134,7 +134,7 @@ static void ber_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
     }
 }
 
-static void ber_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
+static void ber_skip_until_eoc(BERInputVisitor *aiv, Error **errp)
 {
     uint8_t ber_type;
     uint64_t length;
@@ -152,7 +152,6 @@ static void ber_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
             return;
         }
         if (ber_type == BER_TYPE_EOC) {
-            // TODO: set errp
             if (length) {
                 error_set(errp, QERR_INVALID_PARAMETER,
                           "ASN.1 EOC length field is invalid");
@@ -164,8 +163,8 @@ static void ber_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
                 return;
             }
 #ifdef BER_DEBUG
-                fprintf(stderr, "found end! nesting=%" PRIdMAX ", pos=%" PRIu64 "\n",
-                        indefinite_nesting, aiv->cur_pos);
+            fprintf(stderr, "found end! nesting=%" PRIdMAX ", pos=%" PRIu64 "\n",
+                    indefinite_nesting, aiv->cur_pos);
 #endif
             if (!--indefinite_nesting) {
                 return;
@@ -194,11 +193,11 @@ static void ber_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
 }
 
 static void ber_input_start_constructed(Visitor *v, uint8_t exp_ber_type,
-                                   void **obj,
-                                   const char *kind, const char *name,
-                                   size_t size, Error **errp)
+                                        void **obj,
+                                        const char *kind, const char *name,
+                                        size_t size, Error **errp)
 {
-    Asn1InputVisitor *aiv = to_aiv(v);
+    BERInputVisitor *aiv = to_biv(v);
     uint8_t ber_type;
     int64_t len;
     bool is_indefinite;
@@ -263,7 +262,7 @@ static void ber_input_start_constructed(Visitor *v, uint8_t exp_ber_type,
 static void ber_input_end_constructed(Visitor *v, Error **errp)
 {
     uint64_t new_pos;
-    Asn1InputVisitor *aiv = to_aiv(v);
+    BERInputVisitor *aiv = to_biv(v);
 
     new_pos = ber_input_pop(aiv, errp);
 
@@ -285,7 +284,7 @@ static void ber_input_start_struct(Visitor *v, void **obj, const char *kind,
                                    const char *name, size_t size, Error **errp)
 {
     ber_input_start_constructed(v, BER_TYPE_SEQUENCE, obj, kind, name,
-                                 size, errp);
+                                size, errp);
 }
 
 static void ber_input_end_struct(Visitor *v, Error **errp)
@@ -294,8 +293,8 @@ static void ber_input_end_struct(Visitor *v, Error **errp)
 }
 
 static void ber_input_start_array(Visitor *v, void **obj,
-                                   const char *name, size_t elem_count,
-                                   size_t elem_size, Error **errp)
+                                  const char *name, size_t elem_count,
+                                  size_t elem_size, Error **errp)
 {
     ber_input_start_constructed(v, BER_TYPE_SET, obj, NULL, name,
                                  elem_count * elem_size, errp);
@@ -312,9 +311,9 @@ static void ber_input_end_array(Visitor *v, Error **errp)
 }
 
 static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
-                               Error **errp)
+                              Error **errp)
 {
-    Asn1InputVisitor *aiv = to_aiv(v);
+    BERInputVisitor *aiv = to_biv(v);
     uint8_t ber_type;
     bool is_indefinite;
     uint64_t len;
@@ -371,63 +370,63 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
 }
 
 static void ber_input_type_int(Visitor *v, int64_t *obj, const char *name,
-                                Error **errp)
+                               Error **errp)
 {
     ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_uint8_t(Visitor *v, uint8_t *obj,
-                                    const char *name, Error **errp)
-{
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
-}
-
-static void ber_input_type_uint16_t(Visitor *v, uint16_t *obj,
-                                     const char *name, Error **errp)
-{
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
-}
-
-static void ber_input_type_uint32_t(Visitor *v, uint32_t *obj,
-                                     const char *name, Error **errp)
-{
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
-}
-
-static void ber_input_type_uint64_t(Visitor *v, uint64_t *obj,
-                                     const char *name, Error **errp)
-{
-    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
-}
-
-static void ber_input_type_int8_t(Visitor *v, int8_t *obj,
                                    const char *name, Error **errp)
 {
     ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
-static void ber_input_type_int16_t(Visitor *v, int16_t *obj,
+static void ber_input_type_uint16_t(Visitor *v, uint16_t *obj,
                                     const char *name, Error **errp)
+{
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
+}
+
+static void ber_input_type_uint32_t(Visitor *v, uint32_t *obj,
+                                    const char *name, Error **errp)
+{
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
+}
+
+static void ber_input_type_uint64_t(Visitor *v, uint64_t *obj,
+                                    const char *name, Error **errp)
+{
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
+}
+
+static void ber_input_type_int8_t(Visitor *v, int8_t *obj,
+                                  const char *name, Error **errp)
+{
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
+}
+
+static void ber_input_type_int16_t(Visitor *v, int16_t *obj,
+                                   const char *name, Error **errp)
 {
     ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_int32_t(Visitor *v, int32_t *obj,
-                                    const char *name, Error **errp)
+                                   const char *name, Error **errp)
 {
     ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_int64_t(Visitor *v, int64_t *obj,
-                                    const char *name, Error **errp)
+                                   const char *name, Error **errp)
 {
     ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), errp);
 }
 
 static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
-                                 Error **errp)
+                                Error **errp)
 {
-    Asn1InputVisitor *aiv = to_aiv(v);
+    BERInputVisitor *aiv = to_biv(v);
     uint8_t ber_type;
     bool is_indefinite;
     uint64_t len;
@@ -464,12 +463,12 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
 }
 
 /* Function for recursive reading of fragmented primitives */
-static uint32_t ber_input_fragment(Asn1InputVisitor *aiv,
-                                    uint8_t exp_ber_type,
-                                    uint8_t **buffer, uint32_t *buffer_len,
-                                    uint32_t offset, uint32_t nesting,
-                                    bool indefinite, uint64_t max_pos,
-                                    const char *name, Error **errp)
+static uint32_t ber_input_fragment(BERInputVisitor *aiv,
+                                   uint8_t exp_ber_type,
+                                   uint8_t **buffer, uint32_t *buffer_len,
+                                   uint32_t offset, uint32_t nesting,
+                                   bool indefinite, uint64_t max_pos,
+                                   const char *name, Error **errp)
 {
     uint8_t ber_type;
     uint32_t bytes_read = 0;
@@ -513,9 +512,9 @@ static uint32_t ber_input_fragment(Asn1InputVisitor *aiv,
             }
         }
         bytes_read += ber_input_fragment(aiv, exp_ber_type,
-                                          buffer, buffer_len,
-                                          offset, nesting + 1, is_indefinite,
-                                          aiv->cur_pos + len, name, errp);
+                                         buffer, buffer_len,
+                                         offset, nesting + 1, is_indefinite,
+                                         aiv->cur_pos + len, name, errp);
         return bytes_read;
     }
 
@@ -606,33 +605,33 @@ static uint32_t ber_input_fragment(Asn1InputVisitor *aiv,
 }
 
 static void ber_input_type_str(Visitor *v, char **obj, const char *name,
-                                Error **errp)
+                               Error **errp)
 {
-    Asn1InputVisitor *aiv = to_aiv(v);
+    BERInputVisitor *aiv = to_biv(v);
     uint32_t buffer_len = 0;
 
     ber_input_fragment(aiv, BER_TYPE_IA5_STRING, (uint8_t**)obj, &buffer_len,
-                        0, 0, false, 0, name, errp);
+                       0, 0, false, 0, name, errp);
 }
 
-Visitor *ber_input_get_visitor(Asn1InputVisitor *v)
+Visitor *ber_input_get_visitor(BERInputVisitor *v)
 {
     return &v->visitor;
 }
 
-uint64_t ber_input_get_parser_position(Asn1InputVisitor *v)
+uint64_t ber_input_get_parser_position(BERInputVisitor *v)
 {
     return v->cur_pos;
 }
 
-void ber_input_visitor_cleanup(Asn1InputVisitor *v)
+void ber_input_visitor_cleanup(BERInputVisitor *v)
 {
     g_free(v);
 }
 
-Asn1InputVisitor *ber_input_visitor_new(QEMUFile *qfile)
+BERInputVisitor *ber_input_visitor_new(QEMUFile *qfile)
 {
-    Asn1InputVisitor *v;
+    BERInputVisitor *v;
 
     v = g_malloc0(sizeof(*v));
 

@@ -1,5 +1,5 @@
 /*
- * Input Visitor
+ * BER Input Visitor header
  *
  * Copyright IBM, Corp. 2011
  *
@@ -17,12 +17,12 @@
 
 #include "qapi/qapi-visit-core.h"
 
-typedef struct Asn1InputVisitor Asn1InputVisitor;
+typedef struct BERInputVisitor BERInputVisitor;
 
-Asn1InputVisitor *ber_input_visitor_new(QEMUFile *);
-void ber_input_visitor_cleanup(Asn1InputVisitor *v);
-uint64_t ber_input_get_parser_position(Asn1InputVisitor *v);
+BERInputVisitor *ber_input_visitor_new(QEMUFile *);
+void ber_input_visitor_cleanup(BERInputVisitor *v);
+uint64_t ber_input_get_parser_position(BERInputVisitor *v);
 
-Visitor *ber_input_get_visitor(Asn1InputVisitor *v);
+Visitor *ber_input_get_visitor(BERInputVisitor *v);
 
 #endif

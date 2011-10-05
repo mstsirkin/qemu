@@ -1,5 +1,5 @@
 /*
- * ASN.1 Output Visitor
+ * BER Output Visitor
  *
  * Copyright IBM, Corp. 2011
  *
@@ -32,22 +32,22 @@ typedef struct QStackEntry
 
 typedef QTAILQ_HEAD(QStack, QStackEntry) QStack;
 
-struct Asn1OutputVisitor
+struct BEROutputVisitor
 {
     Visitor visitor;
     QStack stack;
     QEMUFile *qfile;
 
-    enum QEMUAsn1Mode mode;
+    enum QEMUBERMode mode;
 };
 
-static Asn1OutputVisitor *to_aov(Visitor *v)
+static BEROutputVisitor *to_aov(Visitor *v)
 {
-    return container_of(v, Asn1OutputVisitor, visitor);
+    return container_of(v, BEROutputVisitor, visitor);
 }
 
-static void ber_output_push(Asn1OutputVisitor *qov, QEMUFile *qfile,
-                             Error **errp)
+static void ber_output_push(BEROutputVisitor *qov, QEMUFile *qfile,
+                            Error **errp)
 {
     QStackEntry *e = g_malloc0(sizeof(*e));
 
@@ -60,7 +60,7 @@ static void ber_output_push(Asn1OutputVisitor *qov, QEMUFile *qfile,
     QTAILQ_INSERT_HEAD(&qov->stack, e, node);
 }
 
-static QEMUFile *ber_output_pop(Asn1OutputVisitor *qov)
+static QEMUFile *ber_output_pop(BEROutputVisitor *qov)
 {
     QStackEntry *e = QTAILQ_FIRST(&qov->stack);
     QEMUFile *qfile;
@@ -73,7 +73,7 @@ static QEMUFile *ber_output_pop(Asn1OutputVisitor *qov)
 }
 
 static unsigned int ber_encode_len(uint8_t *buffer, uint32_t buflen,
-                                    uint64_t len, Error **errp)
+                                   uint64_t len, Error **errp)
 {
     uint64_t mask = 0xFF00000000000000ULL;
     int shift =  64 - 8;
@@ -101,9 +101,9 @@ static unsigned int ber_encode_len(uint8_t *buffer, uint32_t buflen,
 }
 
 static void ber_output_start_constructed(Visitor *v, uint8_t ber_type,
-                                          Error **errp)
+                                         Error **errp)
 {
-    Asn1OutputVisitor *aov = to_aov(v);
+    BEROutputVisitor *aov = to_aov(v);
     uint8_t buf[2];
 
     switch (aov->mode) {
@@ -125,9 +125,9 @@ static void ber_output_start_constructed(Visitor *v, uint8_t ber_type,
     }
 }
 
-static void ber_output_constructed_ber_close(Asn1OutputVisitor *aov,
-                                              uint8_t ber_type,
-                                              Error **errp)
+static void ber_output_constructed_ber_close(BEROutputVisitor *aov,
+                                             uint8_t ber_type,
+                                             Error **errp)
 {
     uint8_t buf[10];
     const QEMUSizedBuffer *qsb;
@@ -159,9 +159,9 @@ static void ber_output_constructed_ber_close(Asn1OutputVisitor *aov,
 }
 
 static void ber_output_end_constructed(Visitor *v, uint8_t ber_type,
-                                        Error **errp)
+                                       Error **errp)
 {
-    Asn1OutputVisitor *aov = to_aov(v);
+    BEROutputVisitor *aov = to_aov(v);
     uint8_t buf[10];
 
 #ifdef BER_DEBUG
@@ -182,8 +182,8 @@ static void ber_output_end_constructed(Visitor *v, uint8_t ber_type,
 }
 
 static void ber_output_start_struct(Visitor *v, void **obj, const char *kind,
-                                     const char *name, size_t unused,
-                                     Error **errp)
+                                    const char *name, size_t unused,
+                                    Error **errp)
 {
     ber_output_start_constructed(v, BER_TYPE_SEQUENCE, errp);
 }
@@ -194,8 +194,8 @@ static void ber_output_end_struct(Visitor *v, Error **errp)
 }
 
 static void ber_output_start_array(Visitor *v, void **obj,
-                                    const char *name, size_t elem_count,
-                                    size_t elem_size, Error **errp)
+                                   const char *name, size_t elem_count,
+                                   size_t elem_size, Error **errp)
 {
     ber_output_start_constructed(v, BER_TYPE_SET, errp);
 }
@@ -211,14 +211,14 @@ static void ber_output_end_array(Visitor *v, Error **errp)
 }
 
 static void ber_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
-                            Error **errp)
+                           Error **errp)
 {
     uint8_t buf[20];
     int shift =  (maxnumbytes - 1) * 8;
     uint64_t mask = 0xFF80ULL << (shift - 8);
     bool exp_zeros;
     int c = 0;
-    Asn1OutputVisitor *aov = to_aov(v);
+    BEROutputVisitor *aov = to_aov(v);
 
 #ifdef BER_DEBUG
     fprintf(stderr, "Writing int 0x%lx (signed=%d, len=%d)\n",
@@ -312,7 +312,7 @@ static void ber_output_type_bool(Visitor *v, bool *obj, const char *name,
                                  Error **errp)
 {
     uint8_t buf[10];
-    Asn1OutputVisitor *aov = to_aov(v);
+    BEROutputVisitor *aov = to_aov(v);
 
     buf[0] = BER_TYPE_BOOLEAN;
     buf[1] = 1;
@@ -327,7 +327,7 @@ static void ber_output_type_bool(Visitor *v, bool *obj, const char *name,
     qemu_put_buffer(aov->qfile, buf, 3);
 }
 
-static void ber_output_fragment(Asn1OutputVisitor *aov, uint8_t ber_type,
+static void ber_output_fragment(BEROutputVisitor *aov, uint8_t ber_type,
                                 uint32_t chunk_size, uint8_t *buffer,
                                 uint32_t buflen, Error **errp)
 {
@@ -366,7 +366,7 @@ static void ber_output_fragment(Asn1OutputVisitor *aov, uint8_t ber_type,
 static void ber_output_type_str(Visitor *v, char **obj, const char *name,
                                 Error **errp)
 {
-    Asn1OutputVisitor *aov = to_aov(v);
+    BEROutputVisitor *aov = to_aov(v);
 
 #ifdef BER_DEBUG
     fprintf(stderr, "Writing string %s, len = 0x%02x\n", *obj,
@@ -374,10 +374,10 @@ static void ber_output_type_str(Visitor *v, char **obj, const char *name,
 #endif
 
     ber_output_fragment(aov, BER_TYPE_IA5_STRING, BER_FRAGMENT_CHUNK_SIZE,
-                         (uint8_t *)*obj, strlen(*obj), errp);
+                        (uint8_t *)*obj, strlen(*obj), errp);
 }
 
-void ber_output_visitor_cleanup(Asn1OutputVisitor *v)
+void ber_output_visitor_cleanup(BEROutputVisitor *v)
 {
     QStackEntry *e, *tmp;
 
@@ -393,15 +393,15 @@ void ber_output_visitor_cleanup(Asn1OutputVisitor *v)
 }
 
 
-Visitor *ber_output_get_visitor(Asn1OutputVisitor *v)
+Visitor *ber_output_get_visitor(BEROutputVisitor *v)
 {
     return &v->visitor;
 }
 
-Asn1OutputVisitor *ber_output_visitor_new(QEMUFile *qfile,
-                                          enum QEMUAsn1Mode mode)
+BEROutputVisitor *ber_output_visitor_new(QEMUFile *qfile,
+                                         enum QEMUBERMode mode)
 {
-    Asn1OutputVisitor *v;
+    BEROutputVisitor *v;
 
     v = g_malloc0(sizeof(*v));
 

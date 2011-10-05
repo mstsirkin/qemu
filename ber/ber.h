@@ -79,7 +79,7 @@ typedef enum ber_length {
     BER_LENGTH_MASK = 0x7F,
 } Asn1Length;
 
-enum QEMUAsn1Mode {
+enum QEMUBERMode {
   BER_MODE_BER = 1,
   BER_MODE_CER = 2,
 };
