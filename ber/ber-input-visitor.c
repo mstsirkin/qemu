@@ -185,7 +185,8 @@ static void ber_skip_until_eoc(BERInputVisitor *aiv, Error **errp)
         } else {
 #ifdef BER_DEBUG
             fprintf(stderr, "skipping type '%s' of length "
-                    "%" PRIu64 ".\n", ber_type_to_str(ber_type), length);
+                    "%" PRIu64 " at %" PRIu64 ".\n",
+                    ber_type_to_str(ber_type), length, aiv->cur_pos);
 #endif
             ber_skip_bytes(aiv, length, errp);
         }
@@ -551,7 +552,8 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
 
         aiv->cur_pos += len;
 #ifdef BER_DEBUG
-        fprintf(stderr, "pos: %" PRIu64 " string: %s\n", aiv->cur_pos, *buffer);
+        fprintf(stderr, "pos: %" PRIu64 " string: %.*s\n", aiv->cur_pos,
+                offset, *buffer);
 #endif
 
         if (nesting == 0) {
