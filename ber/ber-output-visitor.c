@@ -12,17 +12,17 @@
  *
  */
 
-#include "asn1-output-visitor.h"
+#include "ber-output-visitor.h"
 #include "qemu-queue.h"
 #include "qemu-common.h"
 #include "qerror.h"
 #include "hw/hw.h"
-#include "asn1.h"
+#include "ber.h"
 
 /* break up IA5Strings etc. into fragments of this size */
-#define ASN1_FRAGMENT_CHUNK_SIZE  1000
+#define BER_FRAGMENT_CHUNK_SIZE  1000
 
-/*#define ASN1_DEBUG*/
+/*#define BER_DEBUG*/
 
 typedef struct QStackEntry
 {
@@ -46,7 +46,7 @@ static Asn1OutputVisitor *to_aov(Visitor *v)
     return container_of(v, Asn1OutputVisitor, visitor);
 }
 
-static void asn1_output_push(Asn1OutputVisitor *qov, QEMUFile *qfile,
+static void ber_output_push(Asn1OutputVisitor *qov, QEMUFile *qfile,
                              Error **errp)
 {
     QStackEntry *e = g_malloc0(sizeof(*e));
@@ -60,7 +60,7 @@ static void asn1_output_push(Asn1OutputVisitor *qov, QEMUFile *qfile,
     QTAILQ_INSERT_HEAD(&qov->stack, e, node);
 }
 
-static QEMUFile *asn1_output_pop(Asn1OutputVisitor *qov)
+static QEMUFile *ber_output_pop(Asn1OutputVisitor *qov)
 {
     QStackEntry *e = QTAILQ_FIRST(&qov->stack);
     QEMUFile *qfile;
@@ -72,7 +72,7 @@ static QEMUFile *asn1_output_pop(Asn1OutputVisitor *qov)
     return qfile;
 }
 
-static unsigned int asn1_encode_len(uint8_t *buffer, uint32_t buflen,
+static unsigned int ber_encode_len(uint8_t *buffer, uint32_t buflen,
                                     uint64_t len, Error **errp)
 {
     uint64_t mask = 0xFF00000000000000ULL;
@@ -95,20 +95,20 @@ static unsigned int asn1_encode_len(uint8_t *buffer, uint32_t buflen,
         shift -= 8;
     }
 
-    buffer[0] = ASN1_LENGTH_LONG | c;
+    buffer[0] = BER_LENGTH_LONG | c;
 
     return 1 + c;
 }
 
-static void asn1_output_start_constructed(Visitor *v, uint8_t asn1_type,
+static void ber_output_start_constructed(Visitor *v, uint8_t ber_type,
                                           Error **errp)
 {
     Asn1OutputVisitor *aov = to_aov(v);
     uint8_t buf[2];
 
     switch (aov->mode) {
-    case ASN1_MODE_BER:
-        asn1_output_push(aov, aov->qfile, errp);
+    case BER_MODE_BER:
+        ber_output_push(aov, aov->qfile, errp);
         if (*errp) {
             return;
         }
@@ -118,33 +118,33 @@ static void asn1_output_start_constructed(Visitor *v, uint8_t asn1_type,
             return;
         }
         break;
-    case ASN1_MODE_CER:
-        buf[0] = asn1_type | ASN1_TYPE_CONSTRUCTED;
-        buf[1] = ASN1_LENGTH_INDEFINITE;
+    case BER_MODE_CER:
+        buf[0] = ber_type | BER_TYPE_CONSTRUCTED;
+        buf[1] = BER_LENGTH_INDEFINITE;
         qemu_put_buffer(aov->qfile, buf, 2);
     }
 }
 
-static void asn1_output_constructed_ber_close(Asn1OutputVisitor *aov,
-                                              uint8_t asn1_type,
+static void ber_output_constructed_ber_close(Asn1OutputVisitor *aov,
+                                              uint8_t ber_type,
                                               Error **errp)
 {
     uint8_t buf[10];
     const QEMUSizedBuffer *qsb;
     uint64_t len;
     unsigned int num_bytes;
-    QEMUFile *qfile = asn1_output_pop(aov);
+    QEMUFile *qfile = ber_output_pop(aov);
 
-    buf[0] = asn1_type | ASN1_TYPE_CONSTRUCTED;
+    buf[0] = ber_type | BER_TYPE_CONSTRUCTED;
 
     qsb = qemu_buf_get(aov->qfile);
     len = qsb_get_length(qsb);
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
     fprintf(stderr,"constructed type (0x%02x, %p) has length %ld bytes\n",
-            asn1_type, aov->qfile, len);
+            ber_type, aov->qfile, len);
 #endif
 
-    num_bytes = asn1_encode_len(&buf[1], sizeof(buf) - 1, len, errp);
+    num_bytes = ber_encode_len(&buf[1], sizeof(buf) - 1, len, errp);
     if (*errp) {
         return;
     }
@@ -158,22 +158,22 @@ static void asn1_output_constructed_ber_close(Asn1OutputVisitor *aov,
     qemu_fflush(qfile);
 }
 
-static void asn1_output_end_constructed(Visitor *v, uint8_t asn1_type,
+static void ber_output_end_constructed(Visitor *v, uint8_t ber_type,
                                         Error **errp)
 {
     Asn1OutputVisitor *aov = to_aov(v);
     uint8_t buf[10];
 
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
     fprintf(stderr,"end set/struct:\n");
 #endif
 
     switch (aov->mode) {
-    case ASN1_MODE_BER:
-        asn1_output_constructed_ber_close(aov, asn1_type, errp);
+    case BER_MODE_BER:
+        ber_output_constructed_ber_close(aov, ber_type, errp);
         break;
 
-    case ASN1_MODE_CER:
+    case BER_MODE_CER:
         buf[0] = 0x0;
         buf[1] = 0x0;
         qemu_put_buffer(aov->qfile, buf, 2);
@@ -181,36 +181,36 @@ static void asn1_output_end_constructed(Visitor *v, uint8_t asn1_type,
     }
 }
 
-static void asn1_output_start_struct(Visitor *v, void **obj, const char *kind,
+static void ber_output_start_struct(Visitor *v, void **obj, const char *kind,
                                      const char *name, size_t unused,
                                      Error **errp)
 {
-    asn1_output_start_constructed(v, ASN1_TYPE_SEQUENCE, errp);
+    ber_output_start_constructed(v, BER_TYPE_SEQUENCE, errp);
 }
 
-static void asn1_output_end_struct(Visitor *v, Error **errp)
+static void ber_output_end_struct(Visitor *v, Error **errp)
 {
-    asn1_output_end_constructed(v, ASN1_TYPE_SEQUENCE, errp);
+    ber_output_end_constructed(v, BER_TYPE_SEQUENCE, errp);
 }
 
-static void asn1_output_start_array(Visitor *v, void **obj,
+static void ber_output_start_array(Visitor *v, void **obj,
                                     const char *name, size_t elem_count,
                                     size_t elem_size, Error **errp)
 {
-    asn1_output_start_constructed(v, ASN1_TYPE_SET, errp);
+    ber_output_start_constructed(v, BER_TYPE_SET, errp);
 }
 
-static void asn1_output_next_array(Visitor *v, Error **errp)
+static void ber_output_next_array(Visitor *v, Error **errp)
 {
     /* nothing to do here */
 }
 
-static void asn1_output_end_array(Visitor *v, Error **errp)
+static void ber_output_end_array(Visitor *v, Error **errp)
 {
-    asn1_output_end_constructed(v, ASN1_TYPE_SET, errp);
+    ber_output_end_constructed(v, BER_TYPE_SET, errp);
 }
 
-static void asn1_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
+static void ber_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
                             bool is_signed, Error **errp)
 {
     uint8_t buf[20];
@@ -220,12 +220,12 @@ static void asn1_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
     int c = 0;
     Asn1OutputVisitor *aov = to_aov(v);
 
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
     fprintf(stderr, "Writing int 0x%lx (signed=%d, len=%d)\n",
             val, is_signed, maxnumbytes);
 #endif
 
-    buf[0] = ASN1_TYPE_INTEGER;
+    buf[0] = BER_TYPE_INTEGER;
 
     if (is_signed) {
         static uint64_t masks[] = {
@@ -264,80 +264,80 @@ static void asn1_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
     qemu_put_buffer(aov->qfile, buf, 1+1+c);
 }
 
-static void asn1_output_type_int(Visitor *v, int64_t *obj, const char *name,
+static void ber_output_type_int(Visitor *v, int64_t *obj, const char *name,
                                  Error **errp)
 {
-    asn1_output_int(v, *obj, sizeof(*obj), true, errp);
+    ber_output_int(v, *obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_output_type_uint8_t(Visitor *v, uint8_t *obj,
+static void ber_output_type_uint8_t(Visitor *v, uint8_t *obj,
                                      const char *name, Error **errp)
 {
-    asn1_output_int(v, *obj, sizeof(*obj), false, errp);
+    ber_output_int(v, *obj, sizeof(*obj), false, errp);
 }
 
-static void asn1_output_type_uint16_t(Visitor *v, uint16_t *obj,
+static void ber_output_type_uint16_t(Visitor *v, uint16_t *obj,
                                       const char *name, Error **errp)
 {
-    asn1_output_int(v, *obj, sizeof(*obj), false, errp);
+    ber_output_int(v, *obj, sizeof(*obj), false, errp);
 }
 
-static void asn1_output_type_uint32_t(Visitor *v, uint32_t *obj,
+static void ber_output_type_uint32_t(Visitor *v, uint32_t *obj,
                                       const char *name, Error **errp)
 {
-    asn1_output_int(v, *obj, sizeof(*obj), false, errp);
+    ber_output_int(v, *obj, sizeof(*obj), false, errp);
 }
 
-static void asn1_output_type_uint64_t(Visitor *v, uint64_t *obj,
+static void ber_output_type_uint64_t(Visitor *v, uint64_t *obj,
                                       const char *name, Error **errp)
 {
-    asn1_output_int(v, *obj, sizeof(*obj), false, errp);
+    ber_output_int(v, *obj, sizeof(*obj), false, errp);
 }
 
-static void asn1_output_type_int8_t(Visitor *v, int8_t *obj,
+static void ber_output_type_int8_t(Visitor *v, int8_t *obj,
                                     const char *name, Error **errp)
 {
-    asn1_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
+    ber_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_output_type_int16_t(Visitor *v, int16_t *obj,
+static void ber_output_type_int16_t(Visitor *v, int16_t *obj,
                                      const char *name, Error **errp)
 {
-    asn1_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
+    ber_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_output_type_int32_t(Visitor *v, int32_t *obj,
+static void ber_output_type_int32_t(Visitor *v, int32_t *obj,
                                      const char *name, Error **errp)
 {
-    asn1_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
+    ber_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_output_type_int64_t(Visitor *v, int64_t *obj,
+static void ber_output_type_int64_t(Visitor *v, int64_t *obj,
                                      const char *name, Error **errp)
 {
-    asn1_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
+    ber_output_int(v, (int64_t)*obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_output_type_bool(Visitor *v, bool *obj, const char *name,
+static void ber_output_type_bool(Visitor *v, bool *obj, const char *name,
                                   Error **errp)
 {
     uint8_t buf[10];
     Asn1OutputVisitor *aov = to_aov(v);
 
-    buf[0] = ASN1_TYPE_BOOLEAN;
+    buf[0] = BER_TYPE_BOOLEAN;
     buf[1] = 1;
     switch (aov->mode) {
-    case ASN1_MODE_BER:
+    case BER_MODE_BER:
         buf[2] = *obj;
         break;
-    case ASN1_MODE_CER:
+    case BER_MODE_CER:
         buf[2] = (*obj) ? 0xff : 0;
         break;
     }
     qemu_put_buffer(aov->qfile, buf, 3);
 }
 
-static void asn1_output_fragment(Asn1OutputVisitor *aov, uint8_t asn1_type,
+static void ber_output_fragment(Asn1OutputVisitor *aov, uint8_t ber_type,
                                  uint32_t chunk_size, uint8_t *buffer,
                                  uint32_t buflen, Error **errp)
 {
@@ -348,7 +348,7 @@ static void asn1_output_fragment(Asn1OutputVisitor *aov, uint8_t asn1_type,
     uint8_t buf[10];
 
     if (fragmented) {
-        asn1_output_start_constructed(&aov->visitor, asn1_type, errp);
+        ber_output_start_constructed(&aov->visitor, ber_type, errp);
         if (*errp) {
             return;
         }
@@ -357,8 +357,8 @@ static void asn1_output_fragment(Asn1OutputVisitor *aov, uint8_t asn1_type,
     while (offset < buflen) {
         chunk = (buflen - offset > chunk_size) ? chunk_size : buflen - offset;
 
-        buf[0] = asn1_type;
-        num_bytes = asn1_encode_len(&buf[1], sizeof(buf) - 1, chunk,
+        buf[0] = ber_type;
+        num_bytes = ber_encode_len(&buf[1], sizeof(buf) - 1, chunk,
                                     errp);
         if (*errp) {
             return;
@@ -369,25 +369,25 @@ static void asn1_output_fragment(Asn1OutputVisitor *aov, uint8_t asn1_type,
     }
 
     if (fragmented) {
-        asn1_output_end_constructed(&aov->visitor, asn1_type, errp);
+        ber_output_end_constructed(&aov->visitor, ber_type, errp);
     }
 }
 
-static void asn1_output_type_str(Visitor *v, char **obj, const char *name,
+static void ber_output_type_str(Visitor *v, char **obj, const char *name,
                                  Error **errp)
 {
     Asn1OutputVisitor *aov = to_aov(v);
 
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
     fprintf(stderr, "Writing string %s, len = 0x%02x\n", *obj,
             (int)strlen(*obj));
 #endif
 
-    asn1_output_fragment(aov, ASN1_TYPE_IA5_STRING, ASN1_FRAGMENT_CHUNK_SIZE,
+    ber_output_fragment(aov, BER_TYPE_IA5_STRING, BER_FRAGMENT_CHUNK_SIZE,
                          (uint8_t *)*obj, strlen(*obj), errp);
 }
 
-void asn1_output_visitor_cleanup(Asn1OutputVisitor *v)
+void ber_output_visitor_cleanup(Asn1OutputVisitor *v)
 {
     QStackEntry *e, *tmp;
 
@@ -403,34 +403,34 @@ void asn1_output_visitor_cleanup(Asn1OutputVisitor *v)
 }
 
 
-Visitor *asn1_output_get_visitor(Asn1OutputVisitor *v)
+Visitor *ber_output_get_visitor(Asn1OutputVisitor *v)
 {
     return &v->visitor;
 }
 
-Asn1OutputVisitor *asn1_output_visitor_new(QEMUFile *qfile,
+Asn1OutputVisitor *ber_output_visitor_new(QEMUFile *qfile,
                                            enum QEMUAsn1Mode mode)
 {
     Asn1OutputVisitor *v;
 
     v = g_malloc0(sizeof(*v));
 
-    v->visitor.start_struct = asn1_output_start_struct;
-    v->visitor.end_struct = asn1_output_end_struct;
-    v->visitor.start_array = asn1_output_start_array;
-    v->visitor.next_array = asn1_output_next_array;
-    v->visitor.end_array = asn1_output_end_array;
-    v->visitor.type_int = asn1_output_type_int;
-    v->visitor.type_uint8_t = asn1_output_type_uint8_t;
-    v->visitor.type_uint16_t = asn1_output_type_uint16_t;
-    v->visitor.type_uint32_t = asn1_output_type_uint32_t;
-    v->visitor.type_uint64_t = asn1_output_type_uint64_t;
-    v->visitor.type_int8_t = asn1_output_type_int8_t;
-    v->visitor.type_int16_t = asn1_output_type_int16_t;
-    v->visitor.type_int32_t = asn1_output_type_int32_t;
-    v->visitor.type_int64_t = asn1_output_type_int64_t;
-    v->visitor.type_bool = asn1_output_type_bool;
-    v->visitor.type_str = asn1_output_type_str;
+    v->visitor.start_struct = ber_output_start_struct;
+    v->visitor.end_struct = ber_output_end_struct;
+    v->visitor.start_array = ber_output_start_array;
+    v->visitor.next_array = ber_output_next_array;
+    v->visitor.end_array = ber_output_end_array;
+    v->visitor.type_int = ber_output_type_int;
+    v->visitor.type_uint8_t = ber_output_type_uint8_t;
+    v->visitor.type_uint16_t = ber_output_type_uint16_t;
+    v->visitor.type_uint32_t = ber_output_type_uint32_t;
+    v->visitor.type_uint64_t = ber_output_type_uint64_t;
+    v->visitor.type_int8_t = ber_output_type_int8_t;
+    v->visitor.type_int16_t = ber_output_type_int16_t;
+    v->visitor.type_int32_t = ber_output_type_int32_t;
+    v->visitor.type_int64_t = ber_output_type_int64_t;
+    v->visitor.type_bool = ber_output_type_bool;
+    v->visitor.type_str = ber_output_type_str;
 
     QTAILQ_INIT(&v->stack);
     v->qfile = qfile;

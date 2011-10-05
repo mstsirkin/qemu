@@ -12,17 +12,17 @@
  *
  */
 
-#ifndef ASN1_OUTPUT_VISITOR_H
-#define ASN1_OUTPUT_VISITOR_H
+#ifndef BER_OUTPUT_VISITOR_H
+#define BER_OUTPUT_VISITOR_H
 
 #include "qapi/qapi-visit-core.h"
-#include "asn1.h"
+#include "ber.h"
 
 typedef struct Asn1OutputVisitor Asn1OutputVisitor;
 
-Asn1OutputVisitor *asn1_output_visitor_new(QEMUFile *, enum QEMUAsn1Mode mode);
-void asn1_output_visitor_cleanup(Asn1OutputVisitor *v);
+Asn1OutputVisitor *ber_output_visitor_new(QEMUFile *, enum QEMUAsn1Mode mode);
+void ber_output_visitor_cleanup(Asn1OutputVisitor *v);
 
-Visitor *asn1_output_get_visitor(Asn1OutputVisitor *v);
+Visitor *ber_output_get_visitor(Asn1OutputVisitor *v);
 
 #endif

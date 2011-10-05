@@ -1,6 +1,6 @@
 #include <glib.h>
-#include "asn1/asn1-output-visitor.h"
-#include "asn1/asn1-input-visitor.h"
+#include "ber/ber-output-visitor.h"
+#include "ber/ber-input-visitor.h"
 #include "hw/hw.h"
 
 typedef struct TestArray
@@ -16,7 +16,7 @@ typedef struct TestArray
 #define VALUE_Z  (int16_t)0xFF80
 #define VALUE_ZZ -128
 
-#define ENCODING_TYPE ASN1_MODE_CER
+#define ENCODING_TYPE BER_MODE_CER
 
 typedef struct TestStruct
 {
@@ -100,15 +100,15 @@ static void test_visitor_core(void)
 
     ts.string = g_strdup(hw);
 
-    mo = asn1_output_visitor_new(qoutfile, ENCODING_TYPE);
-    v = asn1_output_get_visitor(mo);
+    mo = ber_output_visitor_new(qoutfile, ENCODING_TYPE);
+    v = ber_output_get_visitor(mo);
 
     visit_type_TestStruct(v, &pts, NULL, &err);
 
     qsb = qemu_buf_get(qoutfile);
     len = qsb_get_length(qsb);
 
-    printf("\nLength of encoded ASN.1 stream: %lu\n", len);
+    printf("\nLength of encoded ASN.1 stream: %" PRIx64 "\n", len);
     for (i = 0; i < len ; i++) {
         printf("%02x ", qsb_get_buffer(qsb, 0)[i]);
         if ((i & 0xf) == 0xf) {
@@ -118,8 +118,8 @@ static void test_visitor_core(void)
     printf("\n");
 
     qinfile = qemu_bufopen("r", qsb_clone(qsb));
-    mi = asn1_input_visitor_new(qinfile);
-    v = asn1_input_get_visitor(mi);
+    mi = ber_input_visitor_new(qinfile);
+    v = ber_input_get_visitor(mi);
 
     pts = NULL;
 
@@ -128,7 +128,7 @@ static void test_visitor_core(void)
         g_error("%s", error_get_pretty(err));
     }
 
-    g_assert(len == asn1_input_get_parser_position(mi));
+    g_assert(len == ber_input_get_parser_position(mi));
 
     g_assert(pts != NULL);
     g_assert(pts->x == VALUE_X);
@@ -145,11 +145,11 @@ static void test_visitor_core(void)
     g_free(pts);
 
     qemu_fclose(qinfile);
-    asn1_input_visitor_cleanup(mi);
+    ber_input_visitor_cleanup(mi);
 
     qinfile = qemu_bufopen("r", qsb_clone(qsb));
-    mi = asn1_input_visitor_new(qinfile);
-    v = asn1_input_get_visitor(mi);
+    mi = ber_input_visitor_new(qinfile);
+    v = ber_input_get_visitor(mi);
 
     pts = NULL;
 
@@ -158,7 +158,7 @@ static void test_visitor_core(void)
         g_error("%s", error_get_pretty(err));
     }
 
-    g_assert(len == asn1_input_get_parser_position(mi));
+    g_assert(len == ber_input_get_parser_position(mi));
 
     qemu_fclose(qinfile);
     qemu_fclose(qoutfile);
@@ -173,8 +173,8 @@ static void test_visitor_core(void)
     g_free(pts->array);
     g_free(pts);
 
-    asn1_input_visitor_cleanup(mi);
-    asn1_output_visitor_cleanup(mo);
+    ber_input_visitor_cleanup(mi);
+    ber_output_visitor_cleanup(mo);
 
     g_free(ts.string);
 }
@@ -183,7 +183,7 @@ int main(int argc, char **argv)
 {
     g_test_init(&argc, &argv, NULL);
 
-    g_test_add_func("/0.15/asn1_visitor_core", test_visitor_core);
+    g_test_add_func("/0.15/ber_visitor_core", test_visitor_core);
 
     g_test_run();
 

@@ -12,17 +12,17 @@
  *
  */
 
-#ifndef ASN1_INPUT_VISITOR_H
-#define ASN1_INPUT_VISITOR_H
+#ifndef BER_INPUT_VISITOR_H
+#define BER_INPUT_VISITOR_H
 
 #include "qapi/qapi-visit-core.h"
 
 typedef struct Asn1InputVisitor Asn1InputVisitor;
 
-Asn1InputVisitor *asn1_input_visitor_new(QEMUFile *);
-void asn1_input_visitor_cleanup(Asn1InputVisitor *v);
-uint64_t asn1_input_get_parser_position(Asn1InputVisitor *v);
+Asn1InputVisitor *ber_input_visitor_new(QEMUFile *);
+void ber_input_visitor_cleanup(Asn1InputVisitor *v);
+uint64_t ber_input_get_parser_position(Asn1InputVisitor *v);
 
-Visitor *asn1_input_get_visitor(Asn1InputVisitor *v);
+Visitor *ber_input_get_visitor(Asn1InputVisitor *v);
 
 #endif

@@ -12,16 +12,16 @@
  *
  */
 
-#include "asn1-input-visitor.h"
+#include "ber-input-visitor.h"
 #include "qemu-queue.h"
 #include "qemu-common.h"
 #include "hw/hw.h"
-#include "asn1.h"
+#include "ber.h"
 #include "qerror.h"
 
 #define AIV_STACK_SIZE 1024
 
-/*#define ASN1_DEBUG*/
+/*#define BER_DEBUG*/
 
 typedef struct StackEntry
 {
@@ -42,7 +42,7 @@ static Asn1InputVisitor *to_aiv(Visitor *v)
     return container_of(v, Asn1InputVisitor, visitor);
 }
 
-static void asn1_input_push(Asn1InputVisitor *aiv,
+static void ber_input_push(Asn1InputVisitor *aiv,
                             uint64_t cur_pos, Error **errp)
 {
     aiv->stack[aiv->nb_stack].cur_pos = cur_pos;
@@ -54,7 +54,7 @@ static void asn1_input_push(Asn1InputVisitor *aiv,
     }
 }
 
-static uint64_t asn1_input_pop(Asn1InputVisitor *aiv, Error **errp)
+static uint64_t ber_input_pop(Asn1InputVisitor *aiv, Error **errp)
 {
     aiv->nb_stack--;
 
@@ -66,7 +66,7 @@ static uint64_t asn1_input_pop(Asn1InputVisitor *aiv, Error **errp)
     return aiv->stack[aiv->nb_stack].cur_pos;
 }
 
-static uint8_t asn1_read_type(Asn1InputVisitor *aiv, Error **errp)
+static uint8_t ber_read_type(Asn1InputVisitor *aiv, Error **errp)
 {
     uint8_t type;
 
@@ -76,7 +76,7 @@ static uint8_t asn1_read_type(Asn1InputVisitor *aiv, Error **errp)
     return type;
 }
 
-static uint64_t asn1_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
+static uint64_t ber_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
                                  Error **errp)
 {
     uint8_t byte, c, int_len;
@@ -96,12 +96,14 @@ static uint64_t asn1_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
     if (!(byte & BER_LENGTH_LONG)) {
         len = byte;
     } else {
-        int_len = byte & ASN1_LENGTH_MASK;
+        int_len = byte & BER_LENGTH_MASK;
         if (int_len > 8) {
+            char buf[1024];
+            snprintf(buf, sizeof(buf), "ASN.1 integer length field %d > 8",
+                     int_len);
             /* Length can be up to 127 byte, but it seems
              * safe to assume any input will be < 1TB in length. */
-            error_set(errp, QERR_INVALID_PARAMETER,
-                      "ASN.1 integer length field %d > 8", int_len);
+            error_set(errp, QERR_INVALID_PARAMETER, buf);
             return ~0x0ULL;
         }
         for (c = 0; c < int_len; c++) {
@@ -114,7 +116,7 @@ static uint64_t asn1_read_length(Asn1InputVisitor *aiv, bool *is_indefinite,
     return len;
 }
 
-static void asn1_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
+static void ber_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
                             Error **errp)
 {
     uint8_t buf[1024];
@@ -132,24 +134,24 @@ static void asn1_skip_bytes(Asn1InputVisitor *aiv, uint64_t to_skip,
     }
 }
 
-static void asn1_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
+static void ber_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
 {
-    uint8_t asn1_type;
+    uint8_t ber_type;
     uint64_t length;
     bool is_indefinite;
-    uint64_t indefinite_nesting = 0;
+    uint64_t indefinite_nesting = 1;
 
     while ((*errp) == NULL) {
-        asn1_type = asn1_read_type(aiv, errp);
+        ber_type = ber_read_type(aiv, errp);
         if (*errp) {
             return;
         }
 
-        length = asn1_read_length(aiv, &is_indefinite, errp);
+        length = ber_read_length(aiv, &is_indefinite, errp);
         if (*errp) {
             return;
         }
-        if (asn1_type == BER_TYPE_EOC) {
+        if (ber_type == BER_TYPE_EOC) {
             // TODO: set errp
             if (length) {
                 error_set(errp, QERR_INVALID_PARAMETER,
@@ -161,7 +163,7 @@ static void asn1_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
                           "ASN.1 EOC not within an indefinite length");
                 return;
             }
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
                 fprintf(stderr, "found end! nesting=%" PRIdMAX ", pos=%lu\n",
                         indefinite_nesting, aiv->cur_pos);
 #endif
@@ -170,7 +172,7 @@ static void asn1_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
             }
         }
         if (is_indefinite) {
-            if ((asn1_type & BER_TYPE_P_C_MASK) == BER_TYPE_PRIMITIVE) {
+            if ((ber_type & BER_TYPE_P_C_MASK) == BER_TYPE_PRIMITIVE) {
                 error_set(errp, QERR_INVALID_PARAMETER,
                           "ASN.1 indefinite length in a primitive type.");
                 return;
@@ -182,59 +184,59 @@ static void asn1_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
             }
             ++indefinite_nesting;
         } else {
-#ifdef ASN1_DEBUG
-            fprintf(stderr, "skipping type %x of length "
-                    "%lu.\n", asn1_type, length);
+#ifdef BER_DEBUG
+            fprintf(stderr, "skipping type '%s' of length "
+                    "%lu.\n", ber_type_to_str(ber_type), length);
 #endif
-            asn1_skip_bytes(aiv, length, errp);
+            ber_skip_bytes(aiv, length, errp);
         }
     }
 }
 
-static void asn1_input_start_constructed(Visitor *v, uint8_t exp_asn1_type,
+static void ber_input_start_constructed(Visitor *v, uint8_t exp_ber_type,
                                    void **obj,
                                    const char *kind, const char *name,
                                    size_t size, Error **errp)
 {
     Asn1InputVisitor *aiv = to_aiv(v);
-    uint8_t asn1_type;
+    uint8_t ber_type;
     int64_t len;
     bool is_indefinite;
 
-    asn1_type = asn1_read_type(aiv, errp);
+    ber_type = ber_read_type(aiv, errp);
     if (*errp) {
         return;
     }
 
-    if ((asn1_type & 0x1f) != exp_asn1_type) {
+    if ((ber_type & 0x1f) != exp_ber_type) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                  asn1_type_to_str(asn1_type),
-                  asn1_type_to_str(exp_asn1_type));
+                  ber_type_to_str(ber_type),
+                  ber_type_to_str(exp_ber_type));
         return;
     }
 
-    if ((asn1_type & ASN1_TYPE_P_C_MASK) == 0) {
+    if ((ber_type & BER_TYPE_P_C_MASK) == 0) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
                   "primitive type",
                   "constructed type");
         return;
     }
 
-    len = asn1_read_length(aiv, &is_indefinite, errp);
+    len = ber_read_length(aiv, &is_indefinite, errp);
     if (*errp) {
         return;
     }
 
     if (!is_indefinite) {
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
         fprintf(stderr, "structure/set len: %li\n", len);
 #endif
-        asn1_input_push(aiv, aiv->cur_pos + len, errp);
+        ber_input_push(aiv, aiv->cur_pos + len, errp);
     } else {
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
         fprintf(stderr, "indefinite length encoding!\n");
 #endif
-        asn1_input_push(aiv, 0, errp);
+        ber_input_push(aiv, 0, errp);
     }
 
     if (*errp) {
@@ -243,9 +245,9 @@ static void asn1_input_start_constructed(Visitor *v, uint8_t exp_asn1_type,
 
     if (*obj == NULL) {
         *obj = g_malloc0(size);
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
         fprintf(stderr, "for type '%s' allocated buffer at %p, size = %lu\n",
-                asn1_type_to_str(asn1_type), *obj, size);
+                ber_type_to_str(ber_type), *obj, size);
 #endif
         if (*obj == NULL) {
             error_set(errp, QERR_OUT_OF_MEMORY);
@@ -254,89 +256,89 @@ static void asn1_input_start_constructed(Visitor *v, uint8_t exp_asn1_type,
     }
 }
 
-static void asn1_input_end_constructed(Visitor *v, Error **errp)
+static void ber_input_end_constructed(Visitor *v, Error **errp)
 {
     uint64_t new_pos;
     Asn1InputVisitor *aiv = to_aiv(v);
 
-    new_pos = asn1_input_pop(aiv, errp);
+    new_pos = ber_input_pop(aiv, errp);
 
     if (new_pos != 0) {
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
         fprintf(stderr, "new_pos = %lu\n", new_pos);
 #endif
         aiv->cur_pos = new_pos;
     } else {
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
         fprintf(stderr, "searching for end...\n");
         fprintf(stderr, "cur_pos = %lu\n", aiv->cur_pos);
 #endif
-        asn1_skip_until_eoc(aiv, 0, errp);
+        ber_skip_until_eoc(aiv, errp);
     }
 }
 
-static void asn1_input_start_struct(Visitor *v, void **obj, const char *kind,
+static void ber_input_start_struct(Visitor *v, void **obj, const char *kind,
                                    const char *name, size_t size, Error **errp)
 {
-    asn1_input_start_constructed(v, ASN1_TYPE_SEQUENCE, obj, kind, name,
+    ber_input_start_constructed(v, BER_TYPE_SEQUENCE, obj, kind, name,
                                  size, errp);
 }
 
-static void asn1_input_end_struct(Visitor *v, Error **errp)
+static void ber_input_end_struct(Visitor *v, Error **errp)
 {
-    asn1_input_end_constructed(v, errp);
+    ber_input_end_constructed(v, errp);
 }
 
-static void asn1_input_start_array(Visitor *v, void **obj,
+static void ber_input_start_array(Visitor *v, void **obj,
                                    const char *name, size_t elem_count,
                                    size_t elem_size, Error **errp)
 {
-    asn1_input_start_constructed(v, ASN1_TYPE_SET, obj, NULL, name,
+    ber_input_start_constructed(v, BER_TYPE_SET, obj, NULL, name,
                                  elem_count * elem_size, errp);
 }
 
-static void asn1_input_next_array(Visitor *v, Error **errp)
+static void ber_input_next_array(Visitor *v, Error **errp)
 {
     /* nothing to do here */
 }
 
-static void asn1_input_end_array(Visitor *v, Error **errp)
+static void ber_input_end_array(Visitor *v, Error **errp)
 {
-    asn1_input_end_constructed(v, errp);
+    ber_input_end_constructed(v, errp);
 }
 
-static void asn1_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
+static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
                                bool is_signed, Error **errp)
 {
     Asn1InputVisitor *aiv = to_aiv(v);
-    uint8_t asn1_type;
+    uint8_t ber_type;
     bool is_indefinite;
     uint64_t len;
     uint64_t val = 0;
     int c;
 
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
     fprintf(stderr,"reading int to %p\n", obj);
 #endif
 
-    asn1_type = asn1_read_type(aiv, errp);
+    ber_type = ber_read_type(aiv, errp);
     if (*errp) {
         return;
     }
 
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
     fprintf(stderr,"%s: got type: 0x%02x, expected 0x%02x\n",
-            __func__, asn1_type, ASN1_TYPE_INTEGER);
+            __func__, ber_type, BER_TYPE_INTEGER);
 #endif
 
-    if (asn1_type != ASN1_TYPE_INTEGER) {
+    if (ber_type != BER_TYPE_INTEGER) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                  asn1_type_to_str(asn1_type),
-                  asn1_type_to_str(ASN1_TYPE_INTEGER));
+                  ber_type_to_str(ber_type),
+                  ber_type_to_str(BER_TYPE_INTEGER));
         return;
     }
-    len = asn1_read_length(aiv, &is_indefinite, errp);
-#ifdef ASN1_DEBUG
+    len = ber_read_length(aiv, &is_indefinite, errp);
+#ifdef BER_DEBUG
     fprintf(stderr, "pos: %lu int len: %li\n",
             aiv->cur_pos, len);
 #endif
@@ -370,88 +372,88 @@ static void asn1_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
             break;
         }
     }
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
     fprintf(stderr, "pos: %lu int: %lx\n", aiv->cur_pos, val);
 #endif
 
     memcpy(obj, &val, maxbytes);
 }
 
-static void asn1_input_type_int(Visitor *v, int64_t *obj, const char *name,
+static void ber_input_type_int(Visitor *v, int64_t *obj, const char *name,
                                 Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_input_type_uint8_t(Visitor *v, uint8_t *obj,
+static void ber_input_type_uint8_t(Visitor *v, uint8_t *obj,
                                     const char *name, Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
 }
 
-static void asn1_input_type_uint16_t(Visitor *v, uint16_t *obj,
+static void ber_input_type_uint16_t(Visitor *v, uint16_t *obj,
                                      const char *name, Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
 }
 
-static void asn1_input_type_uint32_t(Visitor *v, uint32_t *obj,
+static void ber_input_type_uint32_t(Visitor *v, uint32_t *obj,
                                      const char *name, Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
 }
 
-static void asn1_input_type_uint64_t(Visitor *v, uint64_t *obj,
+static void ber_input_type_uint64_t(Visitor *v, uint64_t *obj,
                                      const char *name, Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), false, errp);
 }
 
-static void asn1_input_type_int8_t(Visitor *v, int8_t *obj,
+static void ber_input_type_int8_t(Visitor *v, int8_t *obj,
                                    const char *name, Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_input_type_int16_t(Visitor *v, int16_t *obj,
+static void ber_input_type_int16_t(Visitor *v, int16_t *obj,
                                     const char *name, Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_input_type_int32_t(Visitor *v, int32_t *obj,
+static void ber_input_type_int32_t(Visitor *v, int32_t *obj,
                                     const char *name, Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_input_type_int64_t(Visitor *v, int64_t *obj,
+static void ber_input_type_int64_t(Visitor *v, int64_t *obj,
                                     const char *name, Error **errp)
 {
-    asn1_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
+    ber_input_integer(v, (uint8_t *)obj, sizeof(*obj), true, errp);
 }
 
-static void asn1_input_type_bool(Visitor *v, bool *obj, const char *name,
+static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
                                  Error **errp)
 {
     Asn1InputVisitor *aiv = to_aiv(v);
-    uint8_t asn1_type;
+    uint8_t ber_type;
     bool is_indefinite;
     uint64_t len;
 
-    asn1_type = asn1_read_type(aiv, errp);
+    ber_type = ber_read_type(aiv, errp);
     if (*errp) {
         return;
     }
 
-    if (asn1_type != ASN1_TYPE_BOOLEAN) {
+    if (ber_type != BER_TYPE_BOOLEAN) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                  asn1_type_to_str(asn1_type),
-                  asn1_type_to_str(ASN1_TYPE_BOOLEAN));
+                  ber_type_to_str(ber_type),
+                  ber_type_to_str(BER_TYPE_BOOLEAN));
         return;
     }
-    len = asn1_read_length(aiv, &is_indefinite, errp);
-#ifdef ASN1_DEBUG
+    len = ber_read_length(aiv, &is_indefinite, errp);
+#ifdef BER_DEBUG
     fprintf(stderr, "pos: %lu bool len: %li\n",
             aiv->cur_pos, len);
 #endif
@@ -465,40 +467,40 @@ static void asn1_input_type_bool(Visitor *v, bool *obj, const char *name,
     *obj = qemu_get_byte(aiv->qfile);
     aiv->cur_pos += len;
 
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
     fprintf(stderr, "pos: %lu bool: %d\n", aiv->cur_pos, *obj);
 #endif
 }
 
 /* Function for recursive reading of fragmented primitives */
-static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
-                                    uint8_t exp_asn1_type,
+static uint32_t ber_input_fragment(Asn1InputVisitor *aiv,
+                                    uint8_t exp_ber_type,
                                     uint8_t **buffer, uint32_t *buffer_len,
                                     uint32_t offset, uint32_t nesting,
                                     bool indefinite, uint64_t max_pos,
                                     const char *name, Error **errp)
 {
-    uint8_t asn1_type;
+    uint8_t ber_type;
     uint32_t bytes_read = 0;
     bool is_indefinite;
     uint64_t len;
 
-    assert((exp_asn1_type & ASN1_TYPE_CONSTRUCTED) == 0);
+    assert((exp_ber_type & BER_TYPE_CONSTRUCTED) == 0);
 
-    asn1_type = asn1_read_type(aiv, errp);
+    ber_type = ber_read_type(aiv, errp);
     if (*errp) {
         return 0;
     }
 
-    if ((asn1_type & ~ASN1_TYPE_CONSTRUCTED) != exp_asn1_type) {
+    if ((ber_type & ~BER_TYPE_CONSTRUCTED) != exp_ber_type) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE, name ? name : "?",
                   "string");
         return 0;
     }
 
-    if ((asn1_type & ASN1_TYPE_CONSTRUCTED)) {
-        len = asn1_read_length(aiv, &is_indefinite, errp);
-#ifdef ASN1_DEBUG
+    if ((ber_type & BER_TYPE_CONSTRUCTED)) {
+        len = ber_read_length(aiv, &is_indefinite, errp);
+#ifdef BER_DEBUG
         fprintf(stderr, "pos: %lu string len: %li\n",
                 aiv->cur_pos, len);
 #endif
@@ -519,7 +521,7 @@ static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
                 *buffer_len = len;
             }
         }
-        bytes_read += asn1_input_fragment(aiv, exp_asn1_type,
+        bytes_read += ber_input_fragment(aiv, exp_ber_type,
                                           buffer, buffer_len,
                                           offset, nesting + 1, is_indefinite,
                                           aiv->cur_pos + len, name, errp);
@@ -528,8 +530,8 @@ static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
 
     while (true) {
         /* not-constructed case */
-        len = asn1_read_length(aiv, &is_indefinite, errp);
-#ifdef ASN1_DEBUG
+        len = ber_read_length(aiv, &is_indefinite, errp);
+#ifdef BER_DEBUG
         fprintf(stderr, "pos: %lu string len: %li\n",
                 aiv->cur_pos, len);
 #endif
@@ -558,7 +560,7 @@ static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
         bytes_read += len;
 
         aiv->cur_pos += len;
-#ifdef ASN1_DEBUG
+#ifdef BER_DEBUG
         fprintf(stderr, "pos: %lu string: %s\n", aiv->cur_pos, *buffer);
 #endif
 
@@ -571,7 +573,7 @@ static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
             uint8_t byte = qemu_get_byte(aiv->qfile);
             aiv->cur_pos++;
 
-            if (byte == ASN1_TYPE_EOC) {
+            if (byte == BER_TYPE_EOC) {
                 byte = qemu_get_byte(aiv->qfile);
                 aiv->cur_pos++;
 
@@ -585,7 +587,7 @@ static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
                 return bytes_read;
             }
 
-            if (byte != exp_asn1_type) {
+            if (byte != exp_ber_type) {
                 error_set(errp, QERR_INVALID_PARAMETER,
                           "ASN.1 type field is wrong");
                 g_free(*buffer);
@@ -603,7 +605,7 @@ static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
             return bytes_read;
         }
 
-        bytes_read += asn1_input_fragment(aiv, exp_asn1_type,
+        bytes_read += ber_input_fragment(aiv, exp_ber_type,
                                           buffer, buffer_len,
                                           offset, nesting,
                                           indefinite, max_pos, name, errp);
@@ -612,53 +614,53 @@ static uint32_t asn1_input_fragment(Asn1InputVisitor *aiv,
     return bytes_read;
 }
 
-static void asn1_input_type_str(Visitor *v, char **obj, const char *name,
+static void ber_input_type_str(Visitor *v, char **obj, const char *name,
                                 Error **errp)
 {
     Asn1InputVisitor *aiv = to_aiv(v);
     uint32_t buffer_len = 0;
 
-    asn1_input_fragment(aiv, ASN1_TYPE_IA5_STRING, (uint8_t**)obj, &buffer_len,
+    ber_input_fragment(aiv, BER_TYPE_IA5_STRING, (uint8_t**)obj, &buffer_len,
                         0, 0, false, 0, name, errp);
 }
 
-Visitor *asn1_input_get_visitor(Asn1InputVisitor *v)
+Visitor *ber_input_get_visitor(Asn1InputVisitor *v)
 {
     return &v->visitor;
 }
 
-uint64_t asn1_input_get_parser_position(Asn1InputVisitor *v)
+uint64_t ber_input_get_parser_position(Asn1InputVisitor *v)
 {
     return v->cur_pos;
 }
 
-void asn1_input_visitor_cleanup(Asn1InputVisitor *v)
+void ber_input_visitor_cleanup(Asn1InputVisitor *v)
 {
     g_free(v);
 }
 
-Asn1InputVisitor *asn1_input_visitor_new(QEMUFile *qfile)
+Asn1InputVisitor *ber_input_visitor_new(QEMUFile *qfile)
 {
     Asn1InputVisitor *v;
 
     v = g_malloc0(sizeof(*v));
 
-    v->visitor.start_struct = asn1_input_start_struct;
-    v->visitor.end_struct = asn1_input_end_struct;
-    v->visitor.start_array = asn1_input_start_array;
-    v->visitor.next_array = asn1_input_next_array;
-    v->visitor.end_array = asn1_input_end_array;
-    v->visitor.type_int = asn1_input_type_int;
-    v->visitor.type_uint8_t = asn1_input_type_uint8_t;
-    v->visitor.type_uint16_t = asn1_input_type_uint16_t;
-    v->visitor.type_uint32_t = asn1_input_type_uint32_t;
-    v->visitor.type_uint64_t = asn1_input_type_uint64_t;
-    v->visitor.type_int8_t = asn1_input_type_int8_t;
-    v->visitor.type_int16_t = asn1_input_type_int16_t;
-    v->visitor.type_int32_t = asn1_input_type_int32_t;
-    v->visitor.type_int64_t = asn1_input_type_int64_t;
-    v->visitor.type_bool = asn1_input_type_bool;
-    v->visitor.type_str = asn1_input_type_str;
+    v->visitor.start_struct = ber_input_start_struct;
+    v->visitor.end_struct = ber_input_end_struct;
+    v->visitor.start_array = ber_input_start_array;
+    v->visitor.next_array = ber_input_next_array;
+    v->visitor.end_array = ber_input_end_array;
+    v->visitor.type_int = ber_input_type_int;
+    v->visitor.type_uint8_t = ber_input_type_uint8_t;
+    v->visitor.type_uint16_t = ber_input_type_uint16_t;
+    v->visitor.type_uint32_t = ber_input_type_uint32_t;
+    v->visitor.type_uint64_t = ber_input_type_uint64_t;
+    v->visitor.type_int8_t = ber_input_type_int8_t;
+    v->visitor.type_int16_t = ber_input_type_int16_t;
+    v->visitor.type_int32_t = ber_input_type_int32_t;
+    v->visitor.type_int64_t = ber_input_type_int64_t;
+    v->visitor.type_bool = ber_input_type_bool;
+    v->visitor.type_str = ber_input_type_str;
 
     v->qfile = qfile;
     v->cur_pos = 0;

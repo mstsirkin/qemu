@@ -202,9 +202,9 @@ $(qga-obj-y) qemu-ga.o: $(QGALIB_GEN)
 
 qemu-ga$(EXESUF): qemu-ga.o $(qga-obj-y) $(qapi-obj-y) $(trace-obj-y) $(qobject-obj-y) $(version-obj-y) $(addprefix $(qapi-dir)/, qga-qapi-visit.o qga-qapi-types.o qga-qmp-marshal.o)
 
-$(asn1-obj-y): $(GENERATED_HEADERS)
-asn1-visitor.o : $(asn1-obj-y)
-asn1-visitor: asn1-visitor.o asn1/asn1-common.o asn1/asn1-input-visitor.o asn1/asn1-output-visitor.o $(asn1-obj-y) qapi/qapi-visit-core.o qemu-qsb.o error.o qdict.o qint.o qfloat.o qlist.o qjson.o json-streamer.o json-lexer.o json-parser.o qerror.o qemu-error.o qemu-tool.o qbool.o qstring.o qemu-file.o
+$(ber-obj-y): $(GENERATED_HEADERS)
+ber-visitor.o : $(ber-obj-y)
+ber-visitor: ber-visitor.o ber/ber-common.o ber/ber-input-visitor.o ber/ber-output-visitor.o $(ber-obj-y) qapi/qapi-visit-core.o qemu-qsb.o error.o qdict.o qint.o qfloat.o qlist.o qjson.o json-streamer.o json-lexer.o json-parser.o qerror.o qemu-error.o qemu-tool.o qbool.o qstring.o qemu-file.o
 
 QEMULIBS=libhw32 libhw64 libuser libdis libdis-user
 
