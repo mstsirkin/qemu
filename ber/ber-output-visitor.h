@@ -20,7 +20,7 @@
 
 typedef struct BEROutputVisitor BEROutputVisitor;
 
-BEROutputVisitor *ber_output_visitor_new(QEMUFile *, enum QEMUBERMode mode);
+BEROutputVisitor *ber_output_visitor_new(QEMUFile *, BERTypePC mode);
 void ber_output_visitor_cleanup(BEROutputVisitor *v);
 
 Visitor *ber_output_get_visitor(BEROutputVisitor *v);

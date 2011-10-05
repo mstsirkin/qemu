@@ -16,7 +16,7 @@ typedef struct TestArray
 #define VALUE_Z  (int16_t)0xFF80
 #define VALUE_ZZ -128
 
-#define ENCODING_TYPE BER_MODE_CER
+#define ENCODING_TYPE BER_TYPE_CONSTRUCTED
 
 typedef struct TestStruct
 {

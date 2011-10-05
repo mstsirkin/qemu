@@ -79,11 +79,6 @@ typedef enum ber_length {
     BER_LENGTH_MASK = 0x7F,
 } BERLength;
 
-enum QEMUBERMode {
-  BER_MODE_BER = 1,
-  BER_MODE_CER = 2,
-};
-
 const char *ber_type_to_str(uint8_t ber_type);
 
 #endif /* BER_BER_H */
