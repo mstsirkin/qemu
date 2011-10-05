@@ -15,9 +15,7 @@
 
 #include "ber.h"
 
-#define BER_TYPES_MAX 0x1e
-
-static const char *ber_type_names[BER_TYPES_MAX] = {
+static const char *ber_type_names[] = {
     "BER_TYPE_EOC",
     "BER_TYPE_BOOLEAN",
     "BER_TYPE_INTEGER",
@@ -54,9 +52,5 @@ static const char *ber_type_names[BER_TYPES_MAX] = {
 
 const char *ber_type_to_str(uint8_t ber_type)
 {
-    ber_type = (ber_type & 0x1f);
-    if (ber_type > BER_TYPES_MAX) {
-        return "Unknown BER type";
-    }
-    return ber_type_names[ber_type];
+    return ber_type_names[ber_type & BER_TYPE_TAG_MASK];
 }
