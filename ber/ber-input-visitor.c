@@ -21,7 +21,7 @@
 
 #define AIV_STACK_SIZE 1024
 
-/*#define BER_DEBUG*/
+#define BER_DEBUG
 
 typedef struct StackEntry
 {
@@ -164,7 +164,7 @@ static void ber_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
                 return;
             }
 #ifdef BER_DEBUG
-                fprintf(stderr, "found end! nesting=%" PRIdMAX ", pos=%lu\n",
+                fprintf(stderr, "found end! nesting=%" PRIdMAX ", pos=%" PRIu64 "\n",
                         indefinite_nesting, aiv->cur_pos);
 #endif
             if (!--indefinite_nesting) {
@@ -186,7 +186,7 @@ static void ber_skip_until_eoc(Asn1InputVisitor *aiv, Error **errp)
         } else {
 #ifdef BER_DEBUG
             fprintf(stderr, "skipping type '%s' of length "
-                    "%lu.\n", ber_type_to_str(ber_type), length);
+                    "%" PRIu64 ".\n", ber_type_to_str(ber_type), length);
 #endif
             ber_skip_bytes(aiv, length, errp);
         }
@@ -209,9 +209,13 @@ static void ber_input_start_constructed(Visitor *v, uint8_t exp_ber_type,
     }
 
     if ((ber_type & 0x1f) != exp_ber_type) {
+        char buf[1024];
+	sprintf(buf, "%s at offset %" PRIx64 "\n",
+                  ber_type_to_str(exp_ber_type), aiv->cur_pos);
+
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
                   ber_type_to_str(ber_type),
-                  ber_type_to_str(exp_ber_type));
+                  buf);
         return;
     }
 
@@ -229,7 +233,7 @@ static void ber_input_start_constructed(Visitor *v, uint8_t exp_ber_type,
 
     if (!is_indefinite) {
 #ifdef BER_DEBUG
-        fprintf(stderr, "structure/set len: %li\n", len);
+        fprintf(stderr, "structure/set len: %" PRIi64 "\n", len);
 #endif
         ber_input_push(aiv, aiv->cur_pos + len, errp);
     } else {
@@ -246,7 +250,7 @@ static void ber_input_start_constructed(Visitor *v, uint8_t exp_ber_type,
     if (*obj == NULL) {
         *obj = g_malloc0(size);
 #ifdef BER_DEBUG
-        fprintf(stderr, "for type '%s' allocated buffer at %p, size = %lu\n",
+        fprintf(stderr, "for type '%s' allocated buffer at %p, size = %zu\n",
                 ber_type_to_str(ber_type), *obj, size);
 #endif
         if (*obj == NULL) {
@@ -265,13 +269,13 @@ static void ber_input_end_constructed(Visitor *v, Error **errp)
 
     if (new_pos != 0) {
 #ifdef BER_DEBUG
-        fprintf(stderr, "new_pos = %lu\n", new_pos);
+        fprintf(stderr, "new_pos = %" PRIu64 "\n", new_pos);
 #endif
         aiv->cur_pos = new_pos;
     } else {
 #ifdef BER_DEBUG
         fprintf(stderr, "searching for end...\n");
-        fprintf(stderr, "cur_pos = %lu\n", aiv->cur_pos);
+        fprintf(stderr, "cur_pos = %" PRIu64 "\n", aiv->cur_pos);
 #endif
         ber_skip_until_eoc(aiv, errp);
     }
@@ -339,7 +343,7 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
     }
     len = ber_read_length(aiv, &is_indefinite, errp);
 #ifdef BER_DEBUG
-    fprintf(stderr, "pos: %lu int len: %li\n",
+    fprintf(stderr, "pos: %" PRIu64 " int len: %" PRIi64 "\n",
             aiv->cur_pos, len);
 #endif
 
@@ -373,7 +377,7 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
         }
     }
 #ifdef BER_DEBUG
-    fprintf(stderr, "pos: %lu int: %lx\n", aiv->cur_pos, val);
+    fprintf(stderr, "pos: %" PRIu64 " int: %" PRIx64 "\n", aiv->cur_pos, val);
 #endif
 
     memcpy(obj, &val, maxbytes);
@@ -454,7 +458,7 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
     }
     len = ber_read_length(aiv, &is_indefinite, errp);
 #ifdef BER_DEBUG
-    fprintf(stderr, "pos: %lu bool len: %li\n",
+    fprintf(stderr, "pos: %" PRIu64 " bool len: %" PRIi64 "\n",
             aiv->cur_pos, len);
 #endif
 
@@ -468,7 +472,7 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
     aiv->cur_pos += len;
 
 #ifdef BER_DEBUG
-    fprintf(stderr, "pos: %lu bool: %d\n", aiv->cur_pos, *obj);
+    fprintf(stderr, "pos: %" PRIu64 " bool: %d\n", aiv->cur_pos, *obj);
 #endif
 }
 
@@ -492,7 +496,7 @@ static uint32_t ber_input_fragment(Asn1InputVisitor *aiv,
         return 0;
     }
 
-    if ((ber_type & ~BER_TYPE_CONSTRUCTED) != exp_ber_type) {
+    if ((ber_type & BER_TYPE_TAG_MASK) != exp_ber_type) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE, name ? name : "?",
                   "string");
         return 0;
@@ -501,7 +505,7 @@ static uint32_t ber_input_fragment(Asn1InputVisitor *aiv,
     if ((ber_type & BER_TYPE_CONSTRUCTED)) {
         len = ber_read_length(aiv, &is_indefinite, errp);
 #ifdef BER_DEBUG
-        fprintf(stderr, "pos: %lu string len: %li\n",
+        fprintf(stderr, "pos: %" PRIu64 " string len: %" PRIi64 "\n",
                 aiv->cur_pos, len);
 #endif
 
@@ -532,7 +536,7 @@ static uint32_t ber_input_fragment(Asn1InputVisitor *aiv,
         /* not-constructed case */
         len = ber_read_length(aiv, &is_indefinite, errp);
 #ifdef BER_DEBUG
-        fprintf(stderr, "pos: %lu string len: %li\n",
+        fprintf(stderr, "pos: %" PRIu64 " string len: %" PRIi64 "\n",
                 aiv->cur_pos, len);
 #endif
         if (is_indefinite) {
@@ -561,7 +565,7 @@ static uint32_t ber_input_fragment(Asn1InputVisitor *aiv,
 
         aiv->cur_pos += len;
 #ifdef BER_DEBUG
-        fprintf(stderr, "pos: %lu string: %s\n", aiv->cur_pos, *buffer);
+        fprintf(stderr, "pos: %" PRIu64 " string: %s\n", aiv->cur_pos, *buffer);
 #endif
 
         if (nesting == 0) {
