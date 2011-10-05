@@ -37,7 +37,7 @@ struct BEROutputVisitor
     QStack stack;
     QEMUFile *qfile;
 
-    enum QEMUBERMode mode;
+    BERTypePC mode;
 };
 
 static BEROutputVisitor *to_aov(Visitor *v)
@@ -106,7 +106,7 @@ static void ber_output_start_constructed(Visitor *v, uint8_t ber_type,
     uint8_t buf[2];
 
     switch (aov->mode) {
-    case BER_MODE_BER:
+    case BER_TYPE_PRIMITIVE:
         ber_output_push(aov, aov->qfile, errp);
         if (*errp) {
             return;
@@ -117,7 +117,7 @@ static void ber_output_start_constructed(Visitor *v, uint8_t ber_type,
             return;
         }
         break;
-    case BER_MODE_CER:
+    case BER_TYPE_CONSTRUCTED:
         buf[0] = ber_type | BER_TYPE_CONSTRUCTED;
         buf[1] = BER_LENGTH_INDEFINITE;
         qemu_put_buffer(aov->qfile, buf, 2);
@@ -168,11 +168,11 @@ static void ber_output_end_constructed(Visitor *v, uint8_t ber_type,
 #endif
 
     switch (aov->mode) {
-    case BER_MODE_BER:
+    case BER_TYPE_PRIMITIVE:
         ber_output_constructed_ber_close(aov, ber_type, errp);
         break;
 
-    case BER_MODE_CER:
+    case BER_TYPE_CONSTRUCTED:
         buf[0] = 0x0;
         buf[1] = 0x0;
         qemu_put_buffer(aov->qfile, buf, 2);
@@ -316,10 +316,10 @@ static void ber_output_type_bool(Visitor *v, bool *obj, const char *name,
     buf[0] = BER_TYPE_BOOLEAN;
     buf[1] = 1;
     switch (aov->mode) {
-    case BER_MODE_BER:
+    case BER_TYPE_PRIMITIVE:
         buf[2] = *obj;
         break;
-    case BER_MODE_CER:
+    case BER_TYPE_CONSTRUCTED:
         buf[2] = (*obj) ? 0xff : 0;
         break;
     }
@@ -338,12 +338,12 @@ static void ber_output_fragment(BEROutputVisitor *aov, uint8_t ber_type,
     uint32_t chunk_size;
 
     switch (aov->mode) {
-    case BER_MODE_CER:
+    case BER_TYPE_CONSTRUCTED:
         /* X.690 9.2 */
         fragmented = (buflen > CER_FRAGMENT_CHUNK_SIZE);
         chunk_size = 1000;
         break;
-    case BER_MODE_BER:
+    case BER_TYPE_PRIMITIVE:
         chunk_size = 0xffffffff;
         break;
     }
@@ -410,7 +410,7 @@ Visitor *ber_output_get_visitor(BEROutputVisitor *v)
 }
 
 BEROutputVisitor *ber_output_visitor_new(QEMUFile *qfile,
-                                         enum QEMUBERMode mode)
+                                         BERTypePC mode)
 {
     BEROutputVisitor *v;
 
