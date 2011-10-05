@@ -242,6 +242,10 @@ static const QErrorStringTable qerror_table[] = {
         .error_fmt = QERR_STREAM_ENDED,
         .desc      = "Data stream ended",
     },
+    {
+        .error_fmt = QERR_INVALID_STREAM,
+        .desc      = "Data stream is invalid, error was '%(message)'",
+    },
     {}
 };
 

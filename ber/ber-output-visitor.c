@@ -19,8 +19,7 @@
 #include "hw/hw.h"
 #include "ber.h"
 
-/* break up IA5Strings etc. into fragments of this size */
-#define BER_FRAGMENT_CHUNK_SIZE  1000
+#define CER_FRAGMENT_CHUNK_SIZE  1000
 
 /*#define BER_DEBUG*/
 
@@ -328,14 +327,26 @@ static void ber_output_type_bool(Visitor *v, bool *obj, const char *name,
 }
 
 static void ber_output_fragment(BEROutputVisitor *aov, uint8_t ber_type,
-                                uint32_t chunk_size, uint8_t *buffer,
+                                uint8_t *buffer,
                                 uint32_t buflen, Error **errp)
 {
     uint32_t offset = 0;
-    bool fragmented = (buflen > chunk_size);
+    bool fragmented = false;
     uint32_t chunk;
     unsigned int num_bytes;
     uint8_t buf[10];
+    uint32_t chunk_size;
+
+    switch (aov->mode) {
+    case BER_MODE_CER:
+        /* X.690 9.2 */
+        fragmented = (buflen > CER_FRAGMENT_CHUNK_SIZE);
+        chunk_size = 1000;
+        break;
+    case BER_MODE_BER:
+        chunk_size = 0xffffffff;
+        break;
+    }
 
     if (fragmented) {
         ber_output_start_constructed(&aov->visitor, ber_type, errp);
@@ -373,7 +384,7 @@ static void ber_output_type_str(Visitor *v, char **obj, const char *name,
             (int)strlen(*obj));
 #endif
 
-    ber_output_fragment(aov, BER_TYPE_IA5_STRING, BER_FRAGMENT_CHUNK_SIZE,
+    ber_output_fragment(aov, BER_TYPE_IA5_STRING,
                         (uint8_t *)*obj, strlen(*obj), errp);
 }
 
