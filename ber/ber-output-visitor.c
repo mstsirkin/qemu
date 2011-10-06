@@ -71,6 +71,51 @@ static QEMUFile *ber_output_pop(BEROutputVisitor *qov)
     return qfile;
 }
 
+static unsigned int ber_encode_type(uint8_t *buffer, uint32_t buflen,
+                                    enum ber_type_tag ber_type,
+                                    uint8_t ber_type_flags,
+                                    Error **errp)
+{
+    unsigned int idx = 0;
+
+    if (buflen < 1) {
+        error_set(errp, QERR_BUFFER_OVERRUN);
+        return 0;
+    }
+
+    if (ber_type > BER_TYPE_LONG_FORM) {
+        int byte = 4;
+        uint32_t mask = (0x7f << (7 * byte));
+        bool do_write = false;
+
+        buffer[0] = ber_type_flags | BER_TYPE_LONG_FORM;
+
+        while (byte >= 0) {
+            if (!do_write) {
+                if ((mask & ber_type)) {
+                    do_write = true;
+                    if (1 + byte + 1 > buflen) {
+                        error_set(errp, QERR_BUFFER_OVERRUN);
+                        return 0;
+                    }
+                }
+            }
+            if (do_write) {
+                buffer[1+idx] = (ber_type >> (7 * byte)) & 0x7f;
+                if (byte > 0) {
+                    buffer[1+idx] |= 0x80;
+                }
+                idx++;
+            }
+            byte--;
+            mask =  (0x7f << (7 * byte));
+        }
+    } else {
+        buffer[0] = ber_type | ber_type_flags;
+    }
+    return 1 + idx;
+}
+
 static unsigned int ber_encode_len(uint8_t *buffer, uint32_t buflen,
                                    uint64_t len, Error **errp)
 {
@@ -78,7 +123,7 @@ static unsigned int ber_encode_len(uint8_t *buffer, uint32_t buflen,
     int shift =  64 - 8;
     int c = 0;
 
-    if (len <= 0x7f) {
+    if (len <= 0x7f && buflen >= 1) {
         buffer[0] = len;
         return 1;
     }
@@ -89,6 +134,10 @@ static unsigned int ber_encode_len(uint8_t *buffer, uint32_t buflen,
     }
 
     while (shift >= 0) {
+        if (1 + c + 1 < buflen) {
+            error_set(errp, QERR_BUFFER_OVERRUN);
+            return 0;
+        }
         buffer[1+c] = (len >> shift);
         c++;
         shift -= 8;
@@ -99,11 +148,12 @@ static unsigned int ber_encode_len(uint8_t *buffer, uint32_t buflen,
     return 1 + c;
 }
 
-static void ber_output_start_constructed(Visitor *v, uint8_t ber_type,
+static void ber_output_start_constructed(Visitor *v, uint32_t ber_type,
                                          Error **errp)
 {
     BEROutputVisitor *aov = to_aov(v);
-    uint8_t buf[2];
+    uint8_t buf[20];
+    unsigned int tag_bytes_written;
 
     switch (aov->mode) {
     case BER_TYPE_PRIMITIVE:
@@ -118,23 +168,33 @@ static void ber_output_start_constructed(Visitor *v, uint8_t ber_type,
         }
         break;
     case BER_TYPE_CONSTRUCTED:
-        buf[0] = ber_type | BER_TYPE_CONSTRUCTED;
-        buf[1] = BER_LENGTH_INDEFINITE;
-        qemu_put_buffer(aov->qfile, buf, 2);
+        tag_bytes_written = ber_encode_type(buf, sizeof(buf),
+                                            ber_type, BER_TYPE_CONSTRUCTED,
+                                            errp);
+        if (*errp) {
+            return;
+        }
+        buf[tag_bytes_written] = BER_LENGTH_INDEFINITE;
+        qemu_put_buffer(aov->qfile, buf, 1 + tag_bytes_written);
     }
 }
 
 static void ber_output_constructed_ber_close(BEROutputVisitor *aov,
-                                             uint8_t ber_type,
+                                             uint32_t ber_type,
                                              Error **errp)
 {
-    uint8_t buf[10];
+    uint8_t buf[20];
     const QEMUSizedBuffer *qsb;
     uint64_t len;
-    unsigned int num_bytes;
+    unsigned int num_bytes, tag_bytes_written;
     QEMUFile *qfile = ber_output_pop(aov);
 
-    buf[0] = ber_type | BER_TYPE_CONSTRUCTED;
+    tag_bytes_written = ber_encode_type(buf, sizeof(buf),
+                                        ber_type, BER_TYPE_CONSTRUCTED,
+                                        errp);
+    if (*errp) {
+        return;
+    }
 
     qsb = qemu_buf_get(aov->qfile);
     len = qsb_get_length(qsb);
@@ -143,11 +203,13 @@ static void ber_output_constructed_ber_close(BEROutputVisitor *aov,
             ber_type, aov->qfile, len);
 #endif
 
-    num_bytes = ber_encode_len(&buf[1], sizeof(buf) - 1, len, errp);
+    num_bytes = ber_encode_len(&buf[tag_bytes_written],
+                               sizeof(buf) - tag_bytes_written,
+                               len, errp);
     if (*errp) {
         return;
     }
-    qemu_put_buffer(qfile, buf, 1 + num_bytes);
+    qemu_put_buffer(qfile, buf, tag_bytes_written + num_bytes);
 
     qemu_put_buffer(qfile, qsb_get_buffer(qsb, 0),
                     qsb_get_length(qsb));
@@ -157,11 +219,11 @@ static void ber_output_constructed_ber_close(BEROutputVisitor *aov,
     qemu_fflush(qfile);
 }
 
-static void ber_output_end_constructed(Visitor *v, uint8_t ber_type,
+static void ber_output_end_constructed(Visitor *v, uint32_t ber_type,
                                        Error **errp)
 {
     BEROutputVisitor *aov = to_aov(v);
-    uint8_t buf[10];
+    uint8_t buf[20];
 
 #ifdef BER_DEBUG
     fprintf(stderr,"end set/struct:\n");
@@ -173,8 +235,8 @@ static void ber_output_end_constructed(Visitor *v, uint8_t ber_type,
         break;
 
     case BER_TYPE_CONSTRUCTED:
-        buf[0] = 0x0;
-        buf[1] = 0x0;
+        buf[0] = BER_TYPE_EOC;
+        buf[1] = 0;
         qemu_put_buffer(aov->qfile, buf, 2);
         break;
     }
@@ -333,8 +395,8 @@ static void ber_output_fragment(BEROutputVisitor *aov, uint8_t ber_type,
     uint32_t offset = 0;
     bool fragmented = false;
     uint32_t chunk;
-    unsigned int num_bytes;
-    uint8_t buf[10];
+    unsigned int num_bytes, type_bytes;
+    uint8_t buf[20];
     uint32_t chunk_size;
 
     switch (aov->mode) {
@@ -358,13 +420,17 @@ static void ber_output_fragment(BEROutputVisitor *aov, uint8_t ber_type,
     while (offset < buflen) {
         chunk = (buflen - offset > chunk_size) ? chunk_size : buflen - offset;
 
-        buf[0] = ber_type;
-        num_bytes = ber_encode_len(&buf[1], sizeof(buf) - 1, chunk,
-                                    errp);
+        type_bytes = ber_encode_type(buf, sizeof(buf), ber_type, 0,
+                                     errp);
         if (*errp) {
             return;
         }
-        qemu_put_buffer(aov->qfile, buf, 1 + num_bytes);
+        num_bytes = ber_encode_len(&buf[type_bytes], sizeof(buf) - type_bytes,
+                                   chunk, errp);
+        if (*errp) {
+            return;
+        }
+        qemu_put_buffer(aov->qfile, buf, type_bytes + num_bytes);
         qemu_put_buffer(aov->qfile, &buffer[offset], chunk);
         offset += chunk;
     }

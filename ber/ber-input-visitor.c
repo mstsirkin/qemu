@@ -69,12 +69,30 @@ static uint64_t ber_input_pop(BERInputVisitor *aiv, Error **errp)
     return aiv->stack[aiv->nb_stack].cur_pos;
 }
 
-static uint8_t ber_read_type(BERInputVisitor *aiv, Error **errp)
+static uint32_t ber_read_type(BERInputVisitor *aiv, uint8_t *ber_type_flags,
+                              Error **errp)
 {
-    uint8_t type;
+    uint32_t type;
+    uint8_t byte;
 
     type = qemu_get_byte(aiv->qfile);
     aiv->cur_pos ++;
+    *ber_type_flags = type & (BER_TYPE_P_C_MASK | BER_TYPE_CLASS_MASK);
+
+    if ((type & BER_TYPE_TAG_MASK) == BER_TYPE_LONG_FORM) {
+        type = 0;
+        while (true) {
+            type <<= 7;
+            byte = qemu_get_byte(aiv->qfile);
+            aiv->cur_pos ++;
+            type |= byte & 0x7f;
+            if ((byte & 0x80) == 0) {
+                break;
+            }
+        }
+    } else {
+        type &= BER_TYPE_TAG_MASK;
+    }
 
     return type;
 }
@@ -85,6 +103,7 @@ static uint64_t ber_read_length(BERInputVisitor *aiv, bool *is_indefinite,
     uint8_t byte, c, int_len;
     uint64_t len = 0;
     QEMUFile *qfile = aiv->qfile;
+    char buf[128];
 
     *is_indefinite = false;
 
@@ -101,7 +120,6 @@ static uint64_t ber_read_length(BERInputVisitor *aiv, bool *is_indefinite,
     } else {
         int_len = byte & BER_LENGTH_MASK;
         if (int_len > 8) {
-            char buf[1024];
             snprintf(buf, sizeof(buf), "ASN.1 integer length field %d > 8",
                      int_len);
             /* Length can be up to 127 byte, but it seems
@@ -122,7 +140,7 @@ static uint64_t ber_read_length(BERInputVisitor *aiv, bool *is_indefinite,
 static void ber_skip_bytes(BERInputVisitor *aiv, uint64_t to_skip,
                            Error **errp)
 {
-    uint8_t buf[1024];
+    uint8_t buf[128];
     uint32_t skip;
     aiv->cur_pos += to_skip;
 
@@ -139,13 +157,15 @@ static void ber_skip_bytes(BERInputVisitor *aiv, uint64_t to_skip,
 
 static void ber_skip_until_eoc(BERInputVisitor *aiv, Error **errp)
 {
-    uint8_t ber_type;
+    uint32_t ber_type_tag;
     uint64_t length;
     bool is_indefinite;
+    uint8_t ber_type_flags;
     uint64_t indefinite_nesting = 1;
+    char buf[128];
 
     while ((*errp) == NULL) {
-        ber_type = ber_read_type(aiv, errp);
+        ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
         if (*errp) {
             return;
         }
@@ -154,19 +174,25 @@ static void ber_skip_until_eoc(BERInputVisitor *aiv, Error **errp)
         if (*errp) {
             return;
         }
-        if (ber_type == BER_TYPE_EOC) {
+        if (ber_type_tag == BER_TYPE_EOC) {
             if (length) {
-                error_set(errp, QERR_INVALID_PARAMETER,
-                          "ASN.1 EOC length field is invalid");
+                snprintf(buf, sizeof(buf),
+                         "ASN.1 EOC length field at offset %" PRIu64
+                         " is invalid", aiv->cur_pos);
+                error_set(errp, QERR_INVALID_PARAMETER, buf);
                 return;
             }
             if (!indefinite_nesting) {
-                error_set(errp, QERR_INVALID_PARAMETER,
-                          "ASN.1 EOC not within an indefinite length");
+                snprintf(buf, sizeof(buf),
+                         "ASN.1 EOC at offset %" PRIu64
+                         "not within an indefinite length",
+                         aiv->cur_pos);
+                error_set(errp, QERR_INVALID_PARAMETER, buf);
                 return;
             }
 #ifdef BER_DEBUG
-            fprintf(stderr, "found end! nesting=%" PRIdMAX ", pos=%" PRIu64 "\n",
+            fprintf(stderr, "found end! nesting=%" PRIdMAX
+                    ", pos=%" PRIu64 "\n",
                     indefinite_nesting, aiv->cur_pos);
 #endif
             if (!--indefinite_nesting) {
@@ -174,14 +200,20 @@ static void ber_skip_until_eoc(BERInputVisitor *aiv, Error **errp)
             }
         }
         if (is_indefinite) {
-            if ((ber_type & BER_TYPE_P_C_MASK) == BER_TYPE_PRIMITIVE) {
-                error_set(errp, QERR_INVALID_PARAMETER,
-                          "ASN.1 indefinite length in a primitive type.");
+            if ((ber_type_flags & BER_TYPE_P_C_MASK) == BER_TYPE_PRIMITIVE) {
+                snprintf(buf, sizeof(buf),
+                         "ASN.1 indefinite length in a primitive type "
+                         "at offset %" PRIu64,
+                         aiv->cur_pos);
+                error_set(errp, QERR_INVALID_PARAMETER, buf);
                 return;
             }
             if (indefinite_nesting == ~0x0ULL) {
-                error_set(errp, QERR_INVALID_PARAMETER,
-                          "ASN.1 indefinite nesting level is too large.");
+                snprintf(buf, sizeof(buf),
+                         "ASN.1 indefinite nesting level is too large "
+                         "(offset %" PRIu64 ")",
+                         aiv->cur_pos);
+                error_set(errp, QERR_INVALID_PARAMETER, buf);
                 return;
             }
             ++indefinite_nesting;
@@ -189,43 +221,45 @@ static void ber_skip_until_eoc(BERInputVisitor *aiv, Error **errp)
 #ifdef BER_DEBUG
             fprintf(stderr, "skipping type '%s' of length "
                     "%" PRIu64 " at %" PRIu64 ".\n",
-                    ber_type_to_str(ber_type), length, aiv->cur_pos);
+                    ber_type_to_str(ber_type_tag), length, aiv->cur_pos);
 #endif
             ber_skip_bytes(aiv, length, errp);
         }
     }
 }
 
-static void ber_input_start_constructed(Visitor *v, uint8_t exp_ber_type,
-                                        void **obj,
+static void ber_input_start_constructed(Visitor *v, uint32_t exp_ber_type,
+                                        uint8_t exp_ber_flags, void **obj,
                                         const char *kind, const char *name,
                                         size_t size, Error **errp)
 {
     BERInputVisitor *aiv = to_biv(v);
-    uint8_t ber_type;
+    uint32_t ber_type_tag;
+    uint8_t ber_type_flags;
     int64_t len;
     bool is_indefinite;
+    char buf[128];
 
-    ber_type = ber_read_type(aiv, errp);
+    ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
     if (*errp) {
         return;
     }
 
-    if ((ber_type & 0x1f) != exp_ber_type) {
-        char buf[1024];
-	sprintf(buf, "%s at offset %" PRIx64 "\n",
-                  ber_type_to_str(exp_ber_type), aiv->cur_pos);
+    if (ber_type_tag != exp_ber_type || ber_type_flags != exp_ber_flags) {
+	sprintf(buf, "%s at offset %" PRIu64 "\n",
+                ber_type_to_str(exp_ber_type), aiv->cur_pos);
 
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                  ber_type_to_str(ber_type),
+                  ber_type_to_str(ber_type_tag),
                   buf);
         return;
     }
 
-    if ((ber_type & BER_TYPE_P_C_MASK) == 0) {
+    if ((ber_type_flags & BER_TYPE_P_C_MASK) == BER_TYPE_PRIMITIVE) {
+        snprintf(buf, sizeof(buf), "primitive type (%s)",
+                 ber_type_to_str(ber_type_tag));
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                  "primitive type",
-                  "constructed type");
+                  buf, "constructed type");
         return;
     }
 
@@ -254,7 +288,7 @@ static void ber_input_start_constructed(Visitor *v, uint8_t exp_ber_type,
         *obj = g_malloc0(size);
 #ifdef BER_DEBUG
         fprintf(stderr, "for type '%s' allocated buffer at %p, size = %zu\n",
-                ber_type_to_str(ber_type), *obj, size);
+                ber_type_to_str(ber_type_tag), *obj, size);
 #endif
         if (*obj == NULL) {
             error_set(errp, QERR_OUT_OF_MEMORY);
@@ -287,8 +321,8 @@ static void ber_input_end_constructed(Visitor *v, Error **errp)
 static void ber_input_start_struct(Visitor *v, void **obj, const char *kind,
                                    const char *name, size_t size, Error **errp)
 {
-    ber_input_start_constructed(v, BER_TYPE_SEQUENCE, obj, kind, name,
-                                size, errp);
+    ber_input_start_constructed(v, BER_TYPE_SEQUENCE, BER_TYPE_CONSTRUCTED,
+                                obj, kind, name, size, errp);
 }
 
 static void ber_input_end_struct(Visitor *v, Error **errp)
@@ -300,8 +334,9 @@ static void ber_input_start_array(Visitor *v, void **obj,
                                   const char *name, size_t elem_count,
                                   size_t elem_size, Error **errp)
 {
-    ber_input_start_constructed(v, BER_TYPE_SET, obj, NULL, name,
-                                 elem_count * elem_size, errp);
+    ber_input_start_constructed(v, BER_TYPE_SET, BER_TYPE_CONSTRUCTED,
+                                obj, NULL, name,
+                                elem_count * elem_size, errp);
 }
 
 static void ber_input_next_array(Visitor *v, Error **errp)
@@ -318,29 +353,31 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
                               Error **errp)
 {
     BERInputVisitor *aiv = to_biv(v);
-    uint8_t ber_type;
+    uint32_t ber_type_tag;
+    uint8_t ber_type_flags;
     bool is_indefinite;
     uint64_t len;
     uint64_t val = 0;
     int c;
+    char buf[128];
 
 #ifdef BER_DEBUG
     fprintf(stderr,"reading int to %p\n", obj);
 #endif
 
-    ber_type = ber_read_type(aiv, errp);
+    ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
     if (*errp) {
         return;
     }
 
 #ifdef BER_DEBUG
     fprintf(stderr,"%s: got type: 0x%02x, expected 0x%02x\n",
-            __func__, ber_type, BER_TYPE_INTEGER);
+            __func__, ber_type_tag, BER_TYPE_INTEGER);
 #endif
 
-    if (ber_type != BER_TYPE_INTEGER) {
+    if (ber_type_tag != BER_TYPE_INTEGER || ber_type_flags != 0) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                  ber_type_to_str(ber_type),
+                  ber_type_to_str(ber_type_tag),
                   ber_type_to_str(BER_TYPE_INTEGER));
         return;
     }
@@ -350,10 +387,18 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
             aiv->cur_pos, len);
 #endif
 
-    if (is_indefinite || len > maxbytes) {
+    if (is_indefinite) {
         error_set(errp, QERR_INVALID_PARAMETER_VALUE,
-                  "ASN.1 bool int indicator is indefinite or too large",
+                  "ASN.1 int indicator is indefinite",
                   "[1..8]");
+        return;
+    }
+    if (len > maxbytes) {
+        snprintf(buf, sizeof(buf), "ASN.1 integer length indicator %" PRIi64
+                 " is larger than expected (%u bytes)\n",
+                 len, maxbytes);
+        error_set(errp, QERR_INVALID_PARAMETER_VALUE,
+                  buf, "[1..8]");
         return;
     }
 
@@ -431,18 +476,20 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
                                 Error **errp)
 {
     BERInputVisitor *aiv = to_biv(v);
-    uint8_t ber_type;
+    uint32_t ber_type_tag;
+    uint8_t ber_type_flags;
     bool is_indefinite;
     uint64_t len;
+    char buf[128];
 
-    ber_type = ber_read_type(aiv, errp);
+    ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
     if (*errp) {
         return;
     }
 
-    if (ber_type != BER_TYPE_BOOLEAN) {
+    if (ber_type_tag != BER_TYPE_BOOLEAN || ber_type_flags != 0) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                  ber_type_to_str(ber_type),
+                  ber_type_to_str(ber_type_tag),
                   ber_type_to_str(BER_TYPE_BOOLEAN));
         return;
     }
@@ -453,9 +500,12 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
 #endif
 
     if (is_indefinite || len != 1) {
+        snprintf(buf, sizeof(buf),
+                 "ASN.1 bool length indicator at offset %" PRIu64
+                 " is indefinite or != 1",
+                 aiv->cur_pos);
         error_set(errp, QERR_INVALID_PARAMETER_VALUE,
-                  "ASN.1 bool length indicator is indefinite or != 1",
-                  "1");
+                  buf, "1");
         return;
     }
     *obj = qemu_get_byte(aiv->qfile);
@@ -468,32 +518,35 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
 
 /* Function for recursive reading of fragmented primitives */
 static uint32_t ber_input_fragment(BERInputVisitor *aiv,
-                                   uint8_t exp_ber_type,
+                                   uint32_t exp_type_tag,
+                                   uint8_t exp_type_flags,
                                    uint8_t **buffer, uint32_t *buffer_len,
                                    uint32_t offset, uint32_t nesting,
                                    bool indefinite, uint64_t max_pos,
                                    const char *name, Error **errp)
 {
-    uint8_t ber_type;
+    uint32_t ber_type_tag;
+    uint8_t ber_type_flags;
     uint32_t bytes_read = 0;
     bool is_indefinite;
     uint64_t len;
+    char buf[128];
 
-    assert((exp_ber_type & BER_TYPE_CONSTRUCTED) == 0);
+    assert((exp_type_flags & BER_TYPE_CONSTRUCTED) == BER_TYPE_PRIMITIVE);
 
-    ber_type = ber_read_type(aiv, errp);
+    ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
     if (*errp) {
         return 0;
     }
 
-    if ((ber_type & BER_TYPE_TAG_MASK) != exp_ber_type) {
+    if (ber_type_tag != exp_type_tag) {
         error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                  ber_type_to_str(ber_type & BER_TYPE_TAG_MASK),
-                  ber_type_to_str(exp_ber_type));
+                  ber_type_to_str(ber_type_tag & BER_TYPE_TAG_MASK),
+                  ber_type_to_str(exp_type_tag));
         return 0;
     }
 
-    if ((ber_type & BER_TYPE_CONSTRUCTED)) {
+    if ((ber_type_flags & BER_TYPE_CONSTRUCTED)) {
 #ifndef BER_ALLOW_FRAGMENTED_PRIMITIVES
         error_set(errp, QERR_INVALID_STREAM,
                   "constructed encoding of primitive types is not supported");
@@ -526,7 +579,7 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
                 *buffer_len = len;
             }
         }
-        bytes_read += ber_input_fragment(aiv, exp_ber_type,
+        bytes_read += ber_input_fragment(aiv, exp_type_tag, exp_type_flags,
                                          buffer, buffer_len,
                                          offset, nesting + 1, is_indefinite,
                                          aiv->cur_pos + len, name, errp);
@@ -541,9 +594,12 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
         if (!is_indefinite &&
             max_pos != 0 &&
             aiv->cur_pos + 1 > max_pos) {
+            snprintf(buf, sizeof(buf),
+                     "data stream would cause parsing beyond "
+                     "allowed offset at %" PRIu64,
+                     max_pos);
             /* input stream is malformed */
-            error_set(errp, QERR_INVALID_STREAM,
-                      "malformatted data stream (1)");
+            error_set(errp, QERR_INVALID_STREAM, buf);
             goto err_exit;
         }
 
@@ -554,8 +610,11 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
                 aiv->cur_pos, len);
 #endif
         if (is_indefinite) {
-            error_set(errp, QERR_INVALID_PARAMETER,
-                      "Got indefinite type length in primitive type");
+            snprintf(buf, sizeof(buf),
+                     "Got indefinite type length in primitive type (%s) at"
+                     "offset %" PRIu64,
+                     ber_type_to_str(ber_type_tag), aiv->cur_pos);
+            error_set(errp, QERR_INVALID_PARAMETER, buf);
             goto err_exit;
         }
 
@@ -569,8 +628,11 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
          */
         if (!is_indefinite && aiv->cur_pos + len > max_pos) {
             /* input stream is malformed */
-            error_set(errp, QERR_INVALID_STREAM,
-                      "malformatted data stream");
+            snprintf(buf, sizeof(buf),
+                     "data stream would cause parsing beyond "
+                     "allowed offset at %" PRIu64,
+                     max_pos);
+            error_set(errp, QERR_INVALID_STREAM, buf);
             goto err_exit;
         }
 
@@ -600,26 +662,36 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
 
         /* indefinite length case: loop until we encounter EOC */
         if (indefinite) {
-            ber_type = ber_read_type(aiv, errp);
+            ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
             if (*errp) {
                 goto err_exit;
             }
 
-            if (ber_type == BER_TYPE_EOC) {
+            if (ber_type_tag == BER_TYPE_EOC) {
                 uint8_t byte = qemu_get_byte(aiv->qfile);
                 aiv->cur_pos++;
 
                 if (byte != 0) {
-                    error_set(errp, QERR_INVALID_PARAMETER,
-                              "ASN.1 EOC length field is invalid");
+                    snprintf(buf, sizeof(buf),
+                             "ASN.1 EOC length field is invalid at offset "
+                             "%" PRIu64,
+                             aiv->cur_pos);
+                    error_set(errp, QERR_INVALID_PARAMETER, buf);
                     goto err_exit;
                 }
                 return bytes_read;
             }
 
-            if (ber_type != exp_ber_type) {
-                error_set(errp, QERR_INVALID_PARAMETER,
-                          "ASN.1 type field is wrong");
+            if (ber_type_tag != exp_type_tag ||
+                ber_type_flags != exp_type_flags) {
+                snprintf(buf, sizeof(buf),
+                         "ASN.1 type field or flags are wrong. Found "
+                         "0x%x/%u, expected "
+                         "0x%x/%u at offset %" PRIu64,
+                         ber_type_tag, ber_type_flags,
+                         exp_type_tag, exp_type_flags,
+                         aiv->cur_pos);
+                error_set(errp, QERR_INVALID_PARAMETER, buf);
                 goto err_exit;
             }
             continue;
@@ -630,22 +702,22 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
             return bytes_read;
         }
 
-        ber_type = ber_read_type(aiv, errp);
+        ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
         if (*errp) {
             goto err_exit;
         }
 
-        if ((ber_type & BER_TYPE_P_C_MASK) == BER_TYPE_CONSTRUCTED) {
+        if ((ber_type_flags & BER_TYPE_P_C_MASK) == BER_TYPE_CONSTRUCTED) {
             error_set(errp, QERR_INVALID_PARAMETER_TYPE,
                       "constructed BER type",
-                      ber_type_to_str(exp_ber_type));
+                      ber_type_to_str(exp_type_tag));
             goto err_exit;
         }
 
-        if ((ber_type & BER_TYPE_TAG_MASK) != exp_ber_type) {
+        if (ber_type_tag != exp_type_tag) {
             error_set(errp, QERR_INVALID_PARAMETER_TYPE,
-                      ber_type_to_str(ber_type & BER_TYPE_TAG_MASK),
-                      ber_type_to_str(exp_ber_type));
+                      ber_type_to_str(ber_type_tag & BER_TYPE_TAG_MASK),
+                      ber_type_to_str(exp_type_tag));
             goto err_exit;
         }
     }
@@ -663,7 +735,8 @@ static void ber_input_type_str(Visitor *v, char **obj, const char *name,
     BERInputVisitor *aiv = to_biv(v);
     uint32_t buffer_len = 0;
 
-    ber_input_fragment(aiv, BER_TYPE_IA5_STRING, (uint8_t**)obj, &buffer_len,
+    ber_input_fragment(aiv, BER_TYPE_IA5_STRING, 0,
+                       (uint8_t**)obj, &buffer_len,
                        0, 0, false, 0, name, errp);
 }
 

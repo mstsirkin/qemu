@@ -16,6 +16,7 @@ typedef struct TestArray
 #define VALUE_Z  (int16_t)0xFF80
 #define VALUE_ZZ -128
 
+//#define ENCODING_TYPE BER_TYPE_PRIMITIVE
 #define ENCODING_TYPE BER_TYPE_CONSTRUCTED
 
 typedef struct TestStruct
@@ -108,7 +109,7 @@ static void test_visitor_core(void)
     qsb = qemu_buf_get(qoutfile);
     len = qsb_get_length(qsb);
 
-    printf("\nLength of encoded ASN.1 stream: %" PRIx64 "\n", len);
+    printf("\nLength of encoded ASN.1 stream: %" PRIu64 "\n", len);
     for (i = 0; i < len ; i++) {
         printf("%02x ", qsb_get_buffer(qsb, 0)[i]);
         if ((i & 0xf) == 0xf) {
