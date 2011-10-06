@@ -164,14 +164,14 @@ static void ber_skip_until_eoc(BERInputVisitor *aiv, Error **errp)
     uint64_t indefinite_nesting = 1;
     char buf[128];
 
-    while ((*errp) == NULL) {
+    while (!error_is_set(errp)) {
         ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
-        if (*errp) {
+        if (error_is_set(errp)) {
             return;
         }
 
         length = ber_read_length(aiv, &is_indefinite, errp);
-        if (*errp) {
+        if (error_is_set(errp)) {
             return;
         }
         if (ber_type_tag == BER_TYPE_EOC) {
@@ -241,7 +241,7 @@ static void ber_input_start_constructed(Visitor *v, uint32_t exp_ber_type,
     char buf[128];
 
     ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
-    if (*errp) {
+    if (error_is_set(errp)) {
         return;
     }
 
@@ -264,7 +264,7 @@ static void ber_input_start_constructed(Visitor *v, uint32_t exp_ber_type,
     }
 
     len = ber_read_length(aiv, &is_indefinite, errp);
-    if (*errp) {
+    if (error_is_set(errp)) {
         return;
     }
 
@@ -280,7 +280,7 @@ static void ber_input_start_constructed(Visitor *v, uint32_t exp_ber_type,
         ber_input_push(aiv, 0, errp);
     }
 
-    if (*errp) {
+    if (error_is_set(errp)) {
         return;
     }
 
@@ -366,7 +366,7 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
 #endif
 
     ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
-    if (*errp) {
+    if (error_is_set(errp)) {
         return;
     }
 
@@ -483,7 +483,7 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
     char buf[128];
 
     ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
-    if (*errp) {
+    if (error_is_set(errp)) {
         return;
     }
 
@@ -520,7 +520,8 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
 static uint32_t ber_input_fragment(BERInputVisitor *aiv,
                                    uint32_t exp_type_tag,
                                    uint8_t exp_type_flags,
-                                   uint8_t **buffer, uint32_t *buffer_len,
+                                   uint8_t **buffer, size_t *buffer_len,
+                                   bool may_realloc,
                                    uint32_t offset, uint32_t nesting,
                                    bool indefinite, uint64_t max_pos,
                                    const char *name, Error **errp)
@@ -535,7 +536,7 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
     assert((exp_type_flags & BER_TYPE_CONSTRUCTED) == BER_TYPE_PRIMITIVE);
 
     ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
-    if (*errp) {
+    if (error_is_set(errp)) {
         return 0;
     }
 
@@ -563,7 +564,7 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
                 aiv->cur_pos, len);
 #endif
 
-        if (*errp) {
+        if (error_is_set(errp)) {
             return 0;
         }
 
@@ -577,10 +578,11 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
                     return 0;
                 }
                 *buffer_len = len;
+                may_realloc = false;
             }
         }
         bytes_read += ber_input_fragment(aiv, exp_type_tag, exp_type_flags,
-                                         buffer, buffer_len,
+                                         buffer, buffer_len, may_realloc,
                                          offset, nesting + 1, is_indefinite,
                                          aiv->cur_pos + len, name, errp);
         return bytes_read;
@@ -607,7 +609,7 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
         len = ber_read_length(aiv, &is_indefinite, errp);
 #ifdef BER_DEBUG
         fprintf(stderr, "pos: %" PRIu64 " string len: %" PRIi64 "\n",
-                aiv->cur_pos, len);
+                    aiv->cur_pos, len);
 #endif
         if (is_indefinite) {
             snprintf(buf, sizeof(buf),
@@ -652,8 +654,10 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
 
         aiv->cur_pos += len;
 #ifdef BER_DEBUG
-        fprintf(stderr, "pos: %" PRIu64 " string: %.*s\n", aiv->cur_pos,
-                offset, *buffer);
+        if (exp_type_tag == BER_TYPE_IA5_STRING) {
+            fprintf(stderr, "pos: %" PRIu64 " string: %.*s\n", aiv->cur_pos,
+                    offset, *buffer);
+        }
 #endif
 
         if (nesting == 0) {
@@ -663,7 +667,7 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
         /* indefinite length case: loop until we encounter EOC */
         if (indefinite) {
             ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
-            if (*errp) {
+            if (error_is_set(errp)) {
                 goto err_exit;
             }
 
@@ -703,7 +707,7 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
         }
 
         ber_type_tag = ber_read_type(aiv, &ber_type_flags, errp);
-        if (*errp) {
+        if (error_is_set(errp)) {
             goto err_exit;
         }
 
@@ -733,11 +737,34 @@ static void ber_input_type_str(Visitor *v, char **obj, const char *name,
                                Error **errp)
 {
     BERInputVisitor *aiv = to_biv(v);
-    uint32_t buffer_len = 0;
+    size_t buffer_len = 0;
 
     ber_input_fragment(aiv, BER_TYPE_IA5_STRING, 0,
-                       (uint8_t**)obj, &buffer_len,
+                       (uint8_t**)obj, &buffer_len, (*obj == NULL),
                        0, 0, false, 0, name, errp);
+}
+
+static void ber_input_sized_buffer(Visitor *v, uint8_t **obj, size_t len,
+                                   const char *name, Error **errp)
+{
+    BERInputVisitor *aiv = to_biv(v);
+
+    ber_input_fragment(aiv, BER_TYPE_OCTET_STRING, 0,
+                       (uint8_t**)obj, &len, (*obj == NULL),
+                       0, 0, false, 0, name, errp);
+
+#ifdef BER_DEBUG
+    fprintf(stderr, "pos: %" PRIu64 " data at: %p data:\n",
+            aiv->cur_pos, *obj);
+    int i;
+    for (i = 0; i < len; i++) {
+        fprintf(stderr, "%02x ", (*obj)[i]);
+        if ((i & 0xf) == 0xf) {
+            fprintf(stderr, "\n");
+        }
+    }
+    fprintf(stderr, "\n");
+#endif
 }
 
 Visitor *ber_input_get_visitor(BERInputVisitor *v)
@@ -777,6 +804,7 @@ BERInputVisitor *ber_input_visitor_new(QEMUFile *qfile)
     v->visitor.type_int64_t = ber_input_type_int64_t;
     v->visitor.type_bool = ber_input_type_bool;
     v->visitor.type_str = ber_input_type_str;
+    v->visitor.type_sized_buffer = ber_input_sized_buffer;
 
     v->qfile = qfile;
     v->cur_pos = 0;

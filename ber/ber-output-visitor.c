@@ -158,7 +158,7 @@ static void ber_output_start_constructed(Visitor *v, uint32_t ber_type,
     switch (aov->mode) {
     case BER_TYPE_PRIMITIVE:
         ber_output_push(aov, aov->qfile, errp);
-        if (*errp) {
+        if (error_is_set(errp)) {
             return;
         }
         aov->qfile = qemu_bufopen("w", NULL);
@@ -171,7 +171,7 @@ static void ber_output_start_constructed(Visitor *v, uint32_t ber_type,
         tag_bytes_written = ber_encode_type(buf, sizeof(buf),
                                             ber_type, BER_TYPE_CONSTRUCTED,
                                             errp);
-        if (*errp) {
+        if (error_is_set(errp)) {
             return;
         }
         buf[tag_bytes_written] = BER_LENGTH_INDEFINITE;
@@ -192,7 +192,7 @@ static void ber_output_constructed_ber_close(BEROutputVisitor *aov,
     tag_bytes_written = ber_encode_type(buf, sizeof(buf),
                                         ber_type, BER_TYPE_CONSTRUCTED,
                                         errp);
-    if (*errp) {
+    if (error_is_set(errp)) {
         return;
     }
 
@@ -206,7 +206,7 @@ static void ber_output_constructed_ber_close(BEROutputVisitor *aov,
     num_bytes = ber_encode_len(&buf[tag_bytes_written],
                                sizeof(buf) - tag_bytes_written,
                                len, errp);
-    if (*errp) {
+    if (error_is_set(errp)) {
         return;
     }
     qemu_put_buffer(qfile, buf, tag_bytes_written + num_bytes);
@@ -390,7 +390,7 @@ static void ber_output_type_bool(Visitor *v, bool *obj, const char *name,
 
 static void ber_output_fragment(BEROutputVisitor *aov, uint8_t ber_type,
                                 uint8_t *buffer,
-                                uint32_t buflen, Error **errp)
+                                size_t buflen, Error **errp)
 {
     uint32_t offset = 0;
     bool fragmented = false;
@@ -412,7 +412,7 @@ static void ber_output_fragment(BEROutputVisitor *aov, uint8_t ber_type,
 
     if (fragmented) {
         ber_output_start_constructed(&aov->visitor, ber_type, errp);
-        if (*errp) {
+        if (error_is_set(errp)) {
             return;
         }
     }
@@ -422,12 +422,12 @@ static void ber_output_fragment(BEROutputVisitor *aov, uint8_t ber_type,
 
         type_bytes = ber_encode_type(buf, sizeof(buf), ber_type, 0,
                                      errp);
-        if (*errp) {
+        if (error_is_set(errp)) {
             return;
         }
         num_bytes = ber_encode_len(&buf[type_bytes], sizeof(buf) - type_bytes,
                                    chunk, errp);
-        if (*errp) {
+        if (error_is_set(errp)) {
             return;
         }
         qemu_put_buffer(aov->qfile, buf, type_bytes + num_bytes);
@@ -452,6 +452,16 @@ static void ber_output_type_str(Visitor *v, char **obj, const char *name,
 
     ber_output_fragment(aov, BER_TYPE_IA5_STRING,
                         (uint8_t *)*obj, strlen(*obj), errp);
+}
+
+static void ber_output_sized_buffer(Visitor *v, uint8_t **obj,
+                                    size_t size, const char *name,
+                                    Error **errp)
+{
+    BEROutputVisitor *aov = to_aov(v);
+
+    ber_output_fragment(aov, BER_TYPE_OCTET_STRING,
+                        *obj, size, errp);
 }
 
 void ber_output_visitor_cleanup(BEROutputVisitor *v)
@@ -498,6 +508,7 @@ BEROutputVisitor *ber_output_visitor_new(QEMUFile *qfile,
     v->visitor.type_int64_t = ber_output_type_int64_t;
     v->visitor.type_bool = ber_output_type_bool;
     v->visitor.type_str = ber_output_type_str;
+    v->visitor.type_sized_buffer = ber_output_sized_buffer;
 
     QTAILQ_INIT(&v->stack);
     v->qfile = qfile;

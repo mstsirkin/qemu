@@ -28,11 +28,13 @@ typedef struct TestStruct
     bool    b;
     char   *string;
     TestArray *array;
+    uint8_t buf[12];
 } TestStruct;
 
 static void visit_type_TestStruct(Visitor *v, TestStruct **obj, const char *name, Error **errp)
 {
     int i;
+    uint8_t *buf;
     visit_start_struct(v, (void **)obj, "TestStruct", name, sizeof(TestStruct), errp);
     visit_type_int(v, &(*obj)->x, "x", errp);
     visit_type_int32_t(v, &(*obj)->y, "y", errp);
@@ -55,6 +57,9 @@ static void visit_type_TestStruct(Visitor *v, TestStruct **obj, const char *name
     }
     visit_end_array(v, errp);
 
+    buf = (uint8_t *)&((*obj)->buf);
+    visit_type_sized_buffer(v, &buf, sizeof((*obj)->buf), "sized buffer", errp);
+
     visit_end_struct(v, errp);
 }
 
@@ -72,6 +77,7 @@ static void test_visitor_core(void)
     BEROutputVisitor *mo;
     BERInputVisitor *mi;
     Visitor *v;
+#define BUFFER { 0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc }
     TestArray array[2] = {
         [0] =  {
             .a = 1234,
@@ -90,7 +96,9 @@ static void test_visitor_core(void)
         .b = 1,
         .string = NULL,
         .array = array,
+        .buf = BUFFER,
     };
+    uint8_t cmp_buf[] = BUFFER;
     TestStruct *pts = &ts;
     Error *err = NULL;
     QEMUFile *qoutfile = qemu_bufopen("w", NULL);
@@ -138,6 +146,7 @@ static void test_visitor_core(void)
     g_assert(pts->zz ==VALUE_ZZ);
     g_assert(pts->b == 1);
     g_assert(g_strcmp0(hw, pts->string) == 0);
+    g_assert(memcmp(cmp_buf, pts->buf, sizeof(pts->buf)) == 0);
     g_assert(pts->array[0].a == 1234);
     g_assert(pts->array[1].a == 5678);
 

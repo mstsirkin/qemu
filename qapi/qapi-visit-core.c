@@ -194,3 +194,11 @@ void visit_type_number(Visitor *v, double *obj, const char *name, Error **errp)
         v->type_number(v, obj, name, errp);
     }
 }
+
+void visit_type_sized_buffer(Visitor *v, uint8_t **obj, size_t len,
+                             const char *name, Error **errp)
+{
+    if (!error_is_set(errp)) {
+        v->type_sized_buffer(v, obj, len, name, errp);
+    }
+}
