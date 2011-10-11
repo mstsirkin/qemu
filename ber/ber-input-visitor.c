@@ -69,11 +69,18 @@ static uint64_t ber_input_pop(BERInputVisitor *aiv, Error **errp)
     return aiv->stack[aiv->nb_stack].cur_pos;
 }
 
+/*
+ * Read a type tag from the stream. Up-to 32 bit type tags are supported
+ * for reading and otherwise an error is returned. Anything larger than that
+ * would not be reasonable and could only be abused.
+ */
 static uint32_t ber_read_type(BERInputVisitor *aiv, uint8_t *ber_type_flags,
                               Error **errp)
 {
     uint32_t type;
     uint8_t byte;
+    uint8_t ctr = 0;
+    char buf[128];
 
     type = qemu_get_byte(aiv->qfile);
     aiv->cur_pos ++;
@@ -88,6 +95,16 @@ static uint32_t ber_read_type(BERInputVisitor *aiv, uint8_t *ber_type_flags,
             type |= byte & 0x7f;
             if ((byte & 0x80) == 0) {
                 break;
+            }
+            ctr += 7; /* read 7 bits */
+            if (ctr >= (sizeof(type) * 8)) {
+                /* only support 32 bit length identifiers */
+                snprintf(buf, sizeof(buf),
+                         "type tag is larger than 32 bit (offset %" PRIu64
+                         ")", aiv->cur_pos);
+                error_set(errp, QERR_INVALID_STREAM,
+                          buf);
+                return 0;
             }
         }
     } else {
