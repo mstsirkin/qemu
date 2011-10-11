@@ -175,7 +175,12 @@ static void ber_output_start_constructed(Visitor *v, uint32_t ber_type,
             return;
         }
         buf[tag_bytes_written] = BER_LENGTH_INDEFINITE;
-        qemu_put_buffer(aov->qfile, buf, 1 + tag_bytes_written);
+        if (qemu_write_bytes(aov->qfile, buf, 1 + tag_bytes_written) !=
+            1 + tag_bytes_written) {
+            error_set(errp, QERR_QEMUFILE_ERROR,
+                      "Error while writing constructed type");
+            return;
+        }
     }
 }
 
@@ -209,10 +214,14 @@ static void ber_output_constructed_ber_close(BEROutputVisitor *aov,
     if (error_is_set(errp)) {
         return;
     }
-    qemu_put_buffer(qfile, buf, tag_bytes_written + num_bytes);
-
-    qemu_put_buffer(qfile, qsb_get_buffer(qsb, 0),
-                    qsb_get_length(qsb));
+    if (qemu_write_bytes(qfile, buf, tag_bytes_written + num_bytes) !=
+        tag_bytes_written + num_bytes ||
+        qemu_write_bytes(qfile, qsb_get_buffer(qsb, 0),
+                         qsb_get_length(qsb)) != qsb_get_length(qsb)) {
+        error_set(errp, QERR_QEMUFILE_ERROR,
+                  "Error while writing buffer");
+        return;
+    }
 
     qemu_fclose(aov->qfile);
     aov->qfile = qfile;
@@ -237,7 +246,11 @@ static void ber_output_end_constructed(Visitor *v, uint32_t ber_type,
     case BER_TYPE_CONSTRUCTED:
         buf[0] = BER_TYPE_EOC;
         buf[1] = 0;
-        qemu_put_buffer(aov->qfile, buf, 2);
+        if (qemu_write_bytes(aov->qfile, buf, 2) != 2) {
+            error_set(errp, QERR_QEMUFILE_ERROR,
+                      "Error while writing buffer with BER_TYPE_EOC");
+            return;
+        }
         break;
     }
 }
@@ -314,8 +327,13 @@ static void ber_output_fragment(Visitor *v, uint8_t ber_type,
         if (error_is_set(errp)) {
             return;
         }
-        qemu_put_buffer(aov->qfile, buf, type_bytes + num_bytes);
-        qemu_put_buffer(aov->qfile, &buffer[offset], chunk);
+        if (qemu_write_bytes(aov->qfile, buf, type_bytes + num_bytes) !=
+            type_bytes + num_bytes ||
+            qemu_write_bytes(aov->qfile, &buffer[offset], chunk) != chunk) {
+            error_set(errp, QERR_QEMUFILE_ERROR,
+                      "Error while writing buffer");
+            return;
+        }
         offset += chunk;
     }
 
@@ -365,7 +383,10 @@ static void ber_output_int(Visitor *v, int64_t val, uint8_t maxnumbytes,
     }
     buf[1] = c;
 
-    qemu_put_buffer(aov->qfile, buf, 1+1+c);
+    if (qemu_write_bytes(aov->qfile, buf, 1 + 1 + c) != 1 + 1 + c) {
+        error_set(errp, QERR_QEMUFILE_ERROR, "Error while writing integer");
+        return;
+    }
 }
 
 static void ber_output_type_int(Visitor *v, int64_t *obj, const char *name,

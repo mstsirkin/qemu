@@ -82,17 +82,28 @@ static uint32_t ber_read_type(BERInputVisitor *aiv, uint8_t *ber_type_flags,
     uint8_t ctr = 0;
     char buf[128];
 
-    type = qemu_get_byte(aiv->qfile);
+    if (qemu_read_bytes(aiv->qfile, &byte, 1) != 1) {
+        error_set(errp, QERR_QEMUFILE_ERROR,
+                  "Error while reading type");
+        return 0;
+    }
     aiv->cur_pos ++;
+    type = byte;
+
     *ber_type_flags = type & (BER_TYPE_P_C_MASK | BER_TYPE_CLASS_MASK);
 
     if ((type & BER_TYPE_TAG_MASK) == BER_TYPE_LONG_FORM) {
         type = 0;
         while (true) {
             type <<= 7;
-            byte = qemu_get_byte(aiv->qfile);
+            if (qemu_read_bytes(aiv->qfile, &byte, 1) != 1) {
+                error_set(errp, QERR_QEMUFILE_ERROR,
+                          "Error while reading long type");
+                return 0;
+            }
             aiv->cur_pos ++;
-            type |= byte & 0x7f;
+
+            type |= (byte & 0x7f);
             if ((byte & 0x80) == 0) {
                 break;
             }
@@ -124,12 +135,16 @@ static uint64_t ber_read_length(BERInputVisitor *aiv, bool *is_indefinite,
 
     *is_indefinite = false;
 
-    byte = qemu_get_byte(qfile);
+    if (qemu_read_bytes(qfile, &byte, 1) != 1) {
+        error_set(errp, QERR_QEMUFILE_ERROR,
+                  "Error while reading length indicator");
+        return ~0x0ULL;
+    }
     aiv->cur_pos++;
 
     if (byte == BER_LENGTH_INDEFINITE) {
         *is_indefinite = true;
-        return 0;
+        return ~0x0ULL;
     }
 
     if (!(byte & BER_LENGTH_LONG)) {
@@ -146,7 +161,12 @@ static uint64_t ber_read_length(BERInputVisitor *aiv, bool *is_indefinite,
         }
         for (c = 0; c < int_len; c++) {
             len <<= 8;
-            len = qemu_get_byte(qfile);
+            if (qemu_read_bytes(qfile, &byte, 1) != 1) {
+                error_set(errp, QERR_QEMUFILE_ERROR,
+                          "Error while reading length");
+                return ~0x0ULL;
+            }
+            len |= byte;
         }
         aiv->cur_pos += int_len;
     }
@@ -157,17 +177,18 @@ static uint64_t ber_read_length(BERInputVisitor *aiv, bool *is_indefinite,
 static void ber_skip_bytes(BERInputVisitor *aiv, uint64_t to_skip,
                            Error **errp)
 {
-    uint8_t buf[128];
+    uint8_t buf[1024];
     uint32_t skip;
-    aiv->cur_pos += to_skip;
 
     /* skip length bytes */
     while (to_skip > 0) {
         skip = MIN(to_skip, sizeof(buf));
-        if (qemu_get_buffer(aiv->qfile, buf, skip) != skip) {
-            error_set(errp, QERR_STREAM_ENDED);
+        if (qemu_read_bytes(aiv->qfile, buf, skip) != skip) {
+            error_set(errp, QERR_QEMUFILE_ERROR,
+                      "Error while skipping over bytes");
             return;
         }
+        aiv->cur_pos += skip;
         to_skip -= skip;
     }
 }
@@ -371,7 +392,7 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
 {
     BERInputVisitor *aiv = to_biv(v);
     uint32_t ber_type_tag;
-    uint8_t ber_type_flags;
+    uint8_t ber_type_flags, byte;
     bool is_indefinite;
     uint64_t len;
     uint64_t val = 0;
@@ -421,7 +442,12 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
 
     for (c = 0; c < len ; c++) {
         val <<= 8;
-        val |= qemu_get_byte(aiv->qfile);
+        if (qemu_read_bytes(aiv->qfile, &byte, 1) != 1) {
+            error_set(errp, QERR_QEMUFILE_ERROR,
+                      "Error while reading integer");
+            return;
+        }
+        val |= byte;
         if (c == 0 && (val & 0x80) == 0x80) {
             /* sign extend */
             val |= 0xFFFFFFFFFFFFFF00ULL;
@@ -494,7 +520,7 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
 {
     BERInputVisitor *aiv = to_biv(v);
     uint32_t ber_type_tag;
-    uint8_t ber_type_flags;
+    uint8_t ber_type_flags, byte;
     bool is_indefinite;
     uint64_t len;
     char buf[128];
@@ -525,8 +551,13 @@ static void ber_input_type_bool(Visitor *v, bool *obj, const char *name,
                   buf, "1");
         return;
     }
-    *obj = qemu_get_byte(aiv->qfile);
-    aiv->cur_pos += len;
+    if (qemu_read_bytes(aiv->qfile, &byte, 1) != 1) {
+        error_set(errp, QERR_QEMUFILE_ERROR,
+                  "Error while reading boolean");
+        return;
+    }
+    aiv->cur_pos ++;
+    *obj = byte;
 
 #ifdef BER_DEBUG
     fprintf(stderr, "pos: %" PRIu64 " bool: %d\n", aiv->cur_pos, *obj);
@@ -660,9 +691,10 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
             *buffer_len = offset + len;
         }
 
-        if (qemu_get_buffer(aiv->qfile,
+        if (qemu_read_bytes(aiv->qfile,
                             &((uint8_t *)*buffer)[offset], len) != len) {
-            error_set(errp, QERR_STREAM_ENDED);
+            error_set(errp, QERR_QEMUFILE_ERROR,
+                      "Error while reading data");
             goto err_exit;
         }
 
@@ -689,7 +721,12 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
             }
 
             if (ber_type_tag == BER_TYPE_EOC) {
-                uint8_t byte = qemu_get_byte(aiv->qfile);
+                uint8_t byte;
+                if (qemu_read_bytes(aiv->qfile, &byte, 1) != 1) {
+                    error_set(errp, QERR_QEMUFILE_ERROR,
+                              "Error while reading BER_TYPE_EOC length");
+                    goto err_exit;
+                }
                 aiv->cur_pos++;
 
                 if (byte != 0) {

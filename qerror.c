@@ -239,12 +239,12 @@ static const QErrorStringTable qerror_table[] = {
         .desc      = "Out of memory error",
     },
     {
-        .error_fmt = QERR_STREAM_ENDED,
-        .desc      = "Data stream ended",
-    },
-    {
         .error_fmt = QERR_INVALID_STREAM,
         .desc      = "Data stream is invalid, error was '%(message)'",
+    },
+    {
+        .error_fmt = QERR_QEMUFILE_ERROR,
+        .desc      = "QEMUFile has an error, error was '%(message)'",
     },
     {}
 };

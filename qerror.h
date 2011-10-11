@@ -199,10 +199,10 @@ QError *qobject_to_qerror(const QObject *obj);
 #define QERR_OUT_OF_MEMORY \
     "{ 'class': 'OutOfMemoryError', 'data': {} }"
 
-#define QERR_STREAM_ENDED \
-    "{ 'class': 'StreamEndedError', 'data': {} }"
-
 #define QERR_INVALID_STREAM \
     "{ 'class': 'InvalidStreamError', 'data': { 'message': %s } }"
+
+#define QERR_QEMUFILE_ERROR \
+    "{ 'class': 'QEMUFileError', 'data': { 'message': %s } }"
 
 #endif /* QERROR_H */
