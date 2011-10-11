@@ -74,6 +74,8 @@ void qemu_put_be32(QEMUFile *f, unsigned int v);
 void qemu_put_be64(QEMUFile *f, uint64_t v);
 int qemu_get_buffer(QEMUFile *f, uint8_t *buf, int size);
 int qemu_get_byte(QEMUFile *f);
+int qemu_read_bytes(QEMUFile *f, uint8_t *buf, int size);
+int qemu_write_bytes(QEMUFile *f, const uint8_t *buf, int size);
 
 static inline unsigned int qemu_get_ubyte(QEMUFile *f)
 {

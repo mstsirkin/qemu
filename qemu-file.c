@@ -601,3 +601,26 @@ fail:
     g_free(s);
     return NULL;
 }
+
+int qemu_read_bytes(QEMUFile *f, uint8_t *buf, int size)
+{
+    if (qemu_file_has_error(f)) {
+        return -1;
+    }
+    return qemu_get_buffer(f, buf, size);
+}
+
+int qemu_write_bytes(QEMUFile *f, const uint8_t *buf, int size)
+{
+    if (qemu_file_has_error(f)) {
+        return -1;
+    }
+
+    qemu_put_buffer(f, buf, size);
+
+    if (qemu_file_has_error(f)) {
+        return -1;
+    }
+
+    return size;
+}
