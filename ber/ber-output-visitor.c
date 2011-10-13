@@ -134,7 +134,7 @@ static unsigned int ber_encode_len(uint8_t *buffer, uint32_t buflen,
     }
 
     while (shift >= 0) {
-        if (1 + c + 1 < buflen) {
+        if (1 + c + 1 > buflen) {
             error_set(errp, QERR_BUFFER_OVERRUN);
             return 0;
         }

@@ -16,6 +16,8 @@ typedef struct TestArray
 #define VALUE_Z  (int16_t)0xFF80
 #define VALUE_ZZ -128
 
+#define BUFSIZE  12000
+
 //#define ENCODING_TYPE BER_TYPE_PRIMITIVE
 #define ENCODING_TYPE BER_TYPE_CONSTRUCTED
 
@@ -28,7 +30,7 @@ typedef struct TestStruct
     bool    b;
     char   *string;
     TestArray *array;
-    uint8_t buf[12];
+    uint8_t buf[BUFSIZE];
 } TestStruct;
 
 static void visit_type_TestStruct(Visitor *v, TestStruct **obj, const char *name, Error **errp)
@@ -77,7 +79,7 @@ static void test_visitor_core(void)
     BEROutputVisitor *mo;
     BERInputVisitor *mi;
     Visitor *v;
-#define BUFFER { 0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc }
+#define BUFFER { 0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc, }
     TestArray array[2] = {
         [0] =  {
             .a = 1234,
@@ -98,7 +100,7 @@ static void test_visitor_core(void)
         .array = array,
         .buf = BUFFER,
     };
-    uint8_t cmp_buf[] = BUFFER;
+    uint8_t cmp_buf[BUFSIZE] = BUFFER;
     TestStruct *pts = &ts;
     Error *err = NULL;
     QEMUFile *qoutfile = qemu_bufopen("w", NULL);

@@ -322,7 +322,7 @@ static void ber_input_start_constructed(Visitor *v, uint32_t exp_ber_type,
         return;
     }
 
-    if (*obj == NULL) {
+    if (*obj == NULL && size > 0) {
         *obj = g_malloc0(size);
 #ifdef BER_DEBUG
         fprintf(stderr, "for type '%s' allocated buffer at %p, size = %zu\n",
@@ -455,7 +455,7 @@ static void ber_input_integer(Visitor *v, uint8_t *obj, uint8_t maxbytes,
     }
     aiv->cur_pos += len;
 #ifdef BER_DEBUG
-    fprintf(stderr, "pos: %" PRIu64 " int: %" PRIx64 "\n", aiv->cur_pos, val);
+    fprintf(stderr, "pos: %" PRIu64 " int: %" PRIu64 "\n", aiv->cur_pos, val);
 #endif
 
     memcpy(obj, &val, maxbytes);
@@ -629,6 +629,10 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
                 may_realloc = false;
             }
         }
+#ifdef BER_DEBUG
+        fprintf(stderr, "recursing now to read constructed type.\n");
+        fprintf(stderr, "  is_indefinite: %d\n", is_indefinite);
+#endif
         bytes_read += ber_input_fragment(aiv, exp_type_tag, exp_type_flags,
                                          buffer, buffer_len, may_realloc,
                                          offset, nesting + 1, is_indefinite,
@@ -641,7 +645,7 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
         /* Would reading the length carry us beyond what we are allowed to
          * read?
          */
-        if (!is_indefinite &&
+        if (!indefinite &&
             max_pos != 0 &&
             aiv->cur_pos + 1 > max_pos) {
             snprintf(buf, sizeof(buf),
@@ -667,16 +671,15 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
             error_set(errp, QERR_INVALID_PARAMETER, buf);
             goto err_exit;
         }
-
         /* if max_pos is not set, set it here */
-        if (!is_indefinite && max_pos == 0) {
+        if (!indefinite && max_pos == 0) {
             max_pos = aiv->cur_pos + len;
         }
 
         /* Would reading the data carry us beyond what we are allowed to
          * read ?
          */
-        if (!is_indefinite && aiv->cur_pos + len > max_pos) {
+        if (!indefinite && aiv->cur_pos + len > max_pos) {
             /* input stream is malformed */
             snprintf(buf, sizeof(buf),
                      "data stream would cause parsing beyond "
@@ -687,8 +690,10 @@ static uint32_t ber_input_fragment(BERInputVisitor *aiv,
         }
 
         if (offset + len > *buffer_len) {
-            *buffer = g_realloc(*buffer, offset + len);
+            /* allocate one more byte for strings, set to 0 */
+            *buffer = g_realloc(*buffer, offset + len + 1);
             *buffer_len = offset + len;
+            (*buffer)[offset+len] = 0;
         }
 
         if (qemu_read_bytes(aiv->qfile,
