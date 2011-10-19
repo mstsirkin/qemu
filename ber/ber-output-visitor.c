@@ -284,7 +284,7 @@ static void ber_output_end_array(Visitor *v, Error **errp)
     ber_output_end_constructed(v, BER_TYPE_SET, errp);
 }
 
-static void ber_output_fragment(Visitor *v, uint8_t ber_type,
+static void ber_output_fragment(Visitor *v, uint32_t ber_type,
                                 uint8_t *buffer,
                                 size_t buflen, Error **errp)
 {
@@ -314,7 +314,7 @@ static void ber_output_fragment(Visitor *v, uint8_t ber_type,
         }
     }
 
-    while (offset < buflen) {
+    do {
         chunk = (buflen - offset > chunk_size) ? chunk_size : buflen - offset;
 
         type_bytes = ber_encode_type(buf, sizeof(buf), ber_type, 0,
@@ -335,7 +335,7 @@ static void ber_output_fragment(Visitor *v, uint8_t ber_type,
             return;
         }
         offset += chunk;
-    }
+    } while (offset < buflen);
 
     if (fragmented) {
         ber_output_end_constructed(&aov->visitor, ber_type, errp);
