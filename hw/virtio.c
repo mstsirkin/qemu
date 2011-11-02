@@ -672,7 +672,7 @@ VirtQueue *virtio_add_queue(VirtIODevice *vdev, int queue_size,
 void virtio_irq(VirtQueue *vq)
 {
     trace_virtio_irq(vq);
-    vq->vdev->isr |= 0x01;
+    vq->vdev->isr |= VIRTIO_ISR_VQ;
     virtio_notify_vector(vq->vdev, vq->vector);
 }
 
@@ -717,7 +717,7 @@ void virtio_notify(VirtIODevice *vdev, VirtQueue *vq)
     }
 
     trace_virtio_notify(vdev, vq);
-    vdev->isr |= 0x01;
+    vdev->isr |= VIRTIO_ISR_VQ;
     virtio_notify_vector(vdev, vq->vector);
 }
 
@@ -726,7 +726,8 @@ void virtio_notify_config(VirtIODevice *vdev)
     if (!(vdev->status & VIRTIO_CONFIG_S_DRIVER_OK))
         return;
 
-    vdev->isr |= 0x03;
+    /* TODO: why do we set VIRTIO_ISR_VQ here? */
+    vdev->isr |= VIRTIO_ISR_VQ | VIRTIO_ISR_CONFIG;
     virtio_notify_vector(vdev, vdev->config_vector);
 }
 

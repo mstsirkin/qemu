@@ -54,6 +54,11 @@
 /* A guest should never accept this.  It implies negotiation is broken. */
 #define VIRTIO_F_BAD_FEATURE		30
 
+/* The bit of the ISR which indicates a device vq event. */
+#define VIRTIO_ISR_VQ			0x1
+/* The bit of the ISR which indicates a device configuration change. */
+#define VIRTIO_ISR_CONFIG		0x2
+
 /* from Linux's linux/virtio_ring.h */
 
 /* This marks a buffer as continuing via the next field. */
