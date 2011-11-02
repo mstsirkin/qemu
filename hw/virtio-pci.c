@@ -388,7 +388,16 @@ static uint32_t virtio_ioport_read(VirtIOPCIProxy *proxy, uint32_t addr)
         /* reading from the ISR also clears it. */
         ret = vdev->isr;
         vdev->isr = 0;
-        qemu_set_irq(proxy->pci_dev.irq[0], 0);
+        if (msix_enabled(&proxy->pci_dev)) {
+            if (msix_recall(&proxy->pci_dev, vdev->config_vector)) {
+                ret |= VIRTIO_ISR_CONFIG;
+            }
+            if (msix_recall_all(&proxy->pci_dev)) {
+                ret |= VIRTIO_ISR_VQ;
+            }
+        } else {
+		qemu_set_irq(proxy->pci_dev.irq[0], 0);
+        }
         break;
     case VIRTIO_MSI_CONFIG_VECTOR:
         ret = vdev->config_vector;

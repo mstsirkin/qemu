@@ -27,6 +27,9 @@ void msix_unuse_all_vectors(PCIDevice *dev);
 
 void msix_notify(PCIDevice *dev, unsigned vector);
 
+bool msix_recall(PCIDevice *dev, unsigned vector);
+bool msix_recall_all(PCIDevice *dev);
+
 void msix_reset(PCIDevice *dev);
 
 #endif

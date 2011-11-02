@@ -368,6 +368,32 @@ void msix_notify(PCIDevice *dev, unsigned vector)
     stl_le_phys(address, data);
 }
 
+/* Recall outstanding MSI-X notifications for a vector, if possible.
+ * Return true if any were outstanding. */
+bool msix_recall(PCIDevice *dev, unsigned vector)
+{
+    bool ret;
+    if (vector >= dev->msix_entries_nr)
+        return false;
+    ret = msix_is_pending(dev, vector);
+    msix_clr_pending(dev, vector);
+    return ret;
+}
+
+/* Recall outstanding MSI-X notifications for all vectors, if possible.
+ * Return true if any were outstanding. */
+bool msix_recall_all(PCIDevice *dev)
+{
+    uint8_t ret = 0;
+    uint8_t *b;
+    for (b = dev->msix_table_page + MSIX_PAGE_PENDING;
+	 b <= msix_pending_byte(dev, dev->msix_entries_nr - 1); ++b) {
+        ret |= *b;
+        *b = 0;
+    }
+    return ret;
+}
+
 void msix_reset(PCIDevice *dev)
 {
     if (!(dev->cap_present & QEMU_PCI_CAP_MSIX))
