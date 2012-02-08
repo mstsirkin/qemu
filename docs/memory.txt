@@ -170,3 +170,48 @@ various constraints can be supplied to control how these callbacks are called:
  - .old_portio and .old_mmio can be used to ease porting from code using
    cpu_register_io_memory() and register_ioport().  They should not be used
    in new code.
+- .endianness; specifies the device endian-ness, which affects
+   the handling of the value parameter passed from guest to write
+   and returned to guest from read callbacks, as follows:
+        void write(void *opaque, target_phys_addr_t addr,
+                   uint64_t value, unsigned size)
+        uint64_t read(void *opaque, target_phys_addr_t addr,
+                       unsigned size)
+   value is always passed in the natural host format,
+   low size bytes in value are set, the rest are zero padded
+   on input and ignored on output.
+   Legal values for endian-ness are:
+   DEVICE_NATIVE_ENDIAN - The value is left in the format used by guest.
+       Note that although this is typically a fixed format as
+       guest drivers take care of endian conversions,
+       if host endian-ness does not match the device this will
+       result in "mixed endian" since the data is always
+       stored in low bits of value.
+
+       To handle this data, on write, you typically need to first
+       convert to the appropriate type, removing the
+       padding. On read, handle the data in the appropriate
+       type and then convert to uint64_t, padding with leading zeroes.
+
+   DEVICE_LITTLE_ENDIAN - The value is assumed to be
+       endian, and is converted to host endian.
+   DEVICE_BIG_ENDIAN - The value is assumed to be
+        big endian, and is converted to host endian.
+
+    As an example, consider a little endian guest writing a 32 bit
+    value 0x12345678 into an MMIO register, on a big endian host.
+    The value passed to the write callback is documented below:
+
+   DEVICE_NATIVE_ENDIAN - value = 0x0000000087654321
+        Explanation: write callback will get the high bits
+        in value set to 0, and low bits set to data left
+        as is, that is in little endian format.
+   DEVICE_LITTLE_ENDIAN - value = 0x0000000012345678
+        Explanation: the write callback will get the high bits
+        in value set to 0, and low bits set to data in big endian
+        format.
+   DEVICE_BIG_ENDIAN - value = 0x0000000087654321
+        Explanation: the write callback will get the high bits
+        in value set to 0, and low bits set to data in little endian
+        format.
+
