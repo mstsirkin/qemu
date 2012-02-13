@@ -299,9 +299,9 @@ static void object_property_del_all(Object *obj)
 
 static void object_property_del_child(Object *obj, Object *child, Error **errp)
 {
-    ObjectProperty *prop;
+    ObjectProperty *prop, *next;
 
-    QTAILQ_FOREACH(prop, &obj->properties, node) {
+    QTAILQ_FOREACH_SAFE(prop, &obj->properties, node, next) {
         if (!strstart(prop->type, "child<", NULL)) {
             continue;
         }
