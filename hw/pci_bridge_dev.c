@@ -66,7 +66,8 @@ static int pci_bridge_dev_initfn(PCIDevice *dev)
     }
     /* TODO: spec recommends using 64 bit prefetcheable BAR.
      * Check whether that works well. */
-    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY, &bridge_dev->bar);
+    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY |
+		     PCI_BASE_ADDRESS_MEM_TYPE_64, &bridge_dev->bar);
     dev->config[PCI_INTERRUPT_PIN] = 0x1;
     return 0;
 slotid_error:
