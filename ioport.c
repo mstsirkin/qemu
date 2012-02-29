@@ -375,8 +375,9 @@ static void portio_list_add_1(PortioList *piolist,
                              region, start + off_low, off_high - off_low);
     memory_region_add_subregion(piolist->address_space,
                                 start + off_low, alias);
-    piolist->regions[piolist->nr++] = region;
-    piolist->aliases[piolist->nr++] = alias;
+    piolist->regions[piolist->nr] = region;
+    piolist->aliases[piolist->nr] = alias;
+    ++piolist->nr;
 }
 
 void portio_list_add(PortioList *piolist,
