@@ -204,7 +204,7 @@ void shpc_reset(PCIDevice *d)
     pci_set_byte(shpc->config + SHPC_PROG_IFC, SHPC_PROG_IFC_1_0);
     pci_set_word(shpc->config + SHPC_SEC_BUS, SHPC_SEC_BUS_33);
     for (i = 0; i < shpc->nslots; ++i) {
-        pci_set_word(shpc->config + SHPC_SLOT_EVENT_SERR_INT_DIS(d, i),
+        pci_set_byte(shpc->config + SHPC_SLOT_EVENT_SERR_INT_DIS(d, i),
                      SHPC_SLOT_EVENT_PRESENCE |
                      SHPC_SLOT_EVENT_ISOLATED_FAULT |
                      SHPC_SLOT_EVENT_BUTTON |
