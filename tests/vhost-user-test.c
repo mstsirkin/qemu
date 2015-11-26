@@ -178,28 +178,34 @@ static void read_guest_mem(TestServer *s)
     int i, j;
     size_t size;
 
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
     wait_for_fds(s);
 
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
     g_mutex_lock(&s->data_mutex);
 
     /* iterate all regions */
     for (i = 0; i < s->fds_num; i++) {
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
         /* We'll check only the region statring at 0x0*/
         if (s->memory.regions[i].guest_phys_addr != 0x0) {
             continue;
         }
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
         g_assert_cmpint(s->memory.regions[i].memory_size, >, 1024);
 
         size = s->memory.regions[i].memory_size +
             s->memory.regions[i].mmap_offset;
 
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
         guest_mem = mmap(0, size, PROT_READ | PROT_WRITE,
                          MAP_SHARED, s->fds[i], 0);
 
         g_assert(guest_mem != MAP_FAILED);
         guest_mem += (s->memory.regions[i].mmap_offset / sizeof(*guest_mem));
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
         for (j = 0; j < 256; j++) {
             uint32_t a = readl(s->memory.regions[i].guest_phys_addr + j*4);
@@ -207,11 +213,15 @@ static void read_guest_mem(TestServer *s)
 
             g_assert_cmpint(a, ==, b);
         }
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
         munmap(guest_mem, s->memory.regions[i].memory_size);
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
     }
 
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
     g_mutex_unlock(&s->data_mutex);
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 }
 
 static void *thread_function(void *data)
@@ -514,6 +524,7 @@ static void test_migrate(void)
     QDict *rsp;
     guint8 *log;
     guint64 size;
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
     cmd = GET_QEMU_CMDE(s, 2, "");
     fprintf(stderr, "QEMU migrate command: %s\n", cmd);
@@ -621,16 +632,22 @@ int main(int argc, char **argv)
     fprintf(stderr, "QEMU command: %s\n", qemu_cmd);
 
     s = qtest_start(qemu_cmd);
+    fprintf(stderr, "s==%p\n", s);
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
     g_free(qemu_cmd);
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
     qtest_add_data_func("/vhost-user/read-guest-mem", server, read_guest_mem);
     qtest_add_func("/vhost-user/migrate", test_migrate);
 
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
     ret = g_test_run();
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
     if (s) {
         qtest_quit(s);
     }
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
     /* cleanup */
     test_server_free(server);
@@ -641,6 +658,7 @@ int main(int argc, char **argv)
                        tmpfs, strerror(errno));
     }
     g_assert_cmpint(ret, ==, 0);
+    fprintf(stderr, "%s() %s +%d\n", __func__, __FILE__, __LINE__);
 
     return ret;
 }
