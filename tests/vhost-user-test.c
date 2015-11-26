@@ -513,6 +513,7 @@ static void test_migrate(void)
     guint64 size;
 
     cmd = GET_QEMU_CMDE(s, 2, "");
+    fprintf(stderr, "QEMU migrate command: %s\n", cmd);
     from = qtest_start(cmd);
     g_free(cmd);
 
@@ -613,6 +614,8 @@ int main(int argc, char **argv)
     g_thread_new(NULL, thread_function, NULL);
 
     qemu_cmd = GET_QEMU_CMD(server);
+
+    fprintf(stderr, "QEMU command: %s\n", qemu_cmd);
 
     s = qtest_start(qemu_cmd);
     g_free(qemu_cmd);
