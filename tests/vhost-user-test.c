@@ -506,8 +506,19 @@ test_migrate_source_check(GSource *source)
     return FALSE;
 }
 
+#if !GLIB_CHECK_VERSION(2,36,0)
+static gboolean
+test_migrate_source_prepare(GSource *source, gint *timeout)
+{
+    *timeout = -1;
+    return FALSE;
+}
+#endif
+
 GSourceFuncs test_migrate_source_funcs = {
-    NULL,
+#if !GLIB_CHECK_VERSION(2,36,0)
+    test_migrate_source_prepare,
+#endif
     test_migrate_source_check,
     NULL,
     NULL
