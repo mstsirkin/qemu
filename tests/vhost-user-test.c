@@ -496,7 +496,7 @@ typedef struct TestMigrateSource {
 } TestMigrateSource;
 
 static gboolean
-test_migrate_source_check(GSource *source, gint *timeout)
+test_migrate_source_check(GSource *source)
 {
     TestMigrateSource *t = (TestMigrateSource *)source;
     gboolean overlap = t->src->rings && t->dest->rings;
