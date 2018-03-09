@@ -29,7 +29,7 @@
 #error "qemu-options-wrapper.h included with no option defined"
 #endif
 
-#include "qemu-options.def"
+#include <qemu-options.def>
 
 #undef DEF
 #undef DEFHEADING
