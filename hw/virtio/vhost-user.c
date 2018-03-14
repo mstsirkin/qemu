@@ -374,13 +374,67 @@ static int vhost_user_prepare_msg(struct vhost_dev *dev, VhostUserMemory *mem,
     return 0;
 }
 
-static int vhost_user_set_mem_table(struct vhost_dev *dev,
-                                    struct vhost_memory *mem)
+static int vhost_user_set_mem_table_postcopy(struct vhost_dev *dev,
+                                             struct vhost_memory *mem)
 {
     int fds[VHOST_MEMORY_MAX_NREGIONS];
     size_t fd_num;
     bool reply_supported = virtio_has_feature(dev->protocol_features,
                                               VHOST_USER_PROTOCOL_F_REPLY_ACK);
+    /* TODO: Add actual postcopy differences */
+    VhostUserMsg msg = {
+        .hdr.request = VHOST_USER_SET_MEM_TABLE,
+        .hdr.flags = VHOST_USER_VERSION,
+    };
+
+    if (reply_supported) {
+        msg.hdr.flags |= VHOST_USER_NEED_REPLY_MASK;
+    }
+
+    if (vhost_user_prepare_msg(dev, &msg.payload.memory, fds) < 0) {
+        error_report("Failed preparing vhost-user memory table msg");
+        return -1;
+    }
+
+    fd_num = msg.payload.memory.nregions;
+
+    if (!fd_num) {
+        error_report("Failed initializing vhost-user memory map, "
+                     "consider using -object memory-backend-file share=on");
+        return -1;
+    }
+
+    msg.hdr.size = sizeof(msg.payload.memory.nregions);
+    msg.hdr.size += sizeof(msg.payload.memory.padding);
+    msg.hdr.size += fd_num * sizeof(VhostUserMemoryRegion);
+
+    if (vhost_user_write(dev, &msg, fds, fd_num) < 0) {
+        return -1;
+    }
+
+    if (reply_supported) {
+        return process_message_reply(dev, &msg);
+    }
+
+    return 0;
+}
+
+static int vhost_user_set_mem_table(struct vhost_dev *dev,
+                                    struct vhost_memory *mem)
+{
+    struct vhost_user *u = dev->opaque;
+    int fds[VHOST_MEMORY_MAX_NREGIONS];
+    size_t fd_num;
+    bool do_postcopy = u->postcopy_listen && u->postcopy_fd.handler;
+    bool reply_supported = virtio_has_feature(dev->protocol_features,
+                                              VHOST_USER_PROTOCOL_F_REPLY_ACK);
+
+    if (do_postcopy) {
+        /* Postcopy has enough differences that it's best done in it's own
+         * version
+         */
+        return vhost_user_set_mem_table_postcopy(dev, mem);
+    }
 
     VhostUserMsg msg = {
         .hdr.request = VHOST_USER_SET_MEM_TABLE,
