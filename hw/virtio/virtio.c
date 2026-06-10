@@ -858,6 +858,9 @@ static void virtqueue_unmap_sg(VirtQueue *vq, const VirtQueueElement *elem,
     for (i = 0; i < elem->in_num; i++) {
         size_t size = MIN(len - offset, elem->in_sg[i].iov_len);
 
+        if (!elem->in_sg[i].iov_base) {
+            continue;
+        }
         dma_memory_unmap(dma_as, elem->in_sg[i].iov_base,
                          elem->in_sg[i].iov_len,
                          DMA_DIRECTION_FROM_DEVICE, size);
@@ -865,11 +868,15 @@ static void virtqueue_unmap_sg(VirtQueue *vq, const VirtQueueElement *elem,
         offset += size;
     }
 
-    for (i = 0; i < elem->out_num; i++)
+    for (i = 0; i < elem->out_num; i++) {
+        if (!elem->out_sg[i].iov_base) {
+            continue;
+        }
         dma_memory_unmap(dma_as, elem->out_sg[i].iov_base,
                          elem->out_sg[i].iov_len,
                          DMA_DIRECTION_TO_DEVICE,
                          elem->out_sg[i].iov_len);
+    }
 }
 
 /* virtqueue_detach_element:
@@ -1611,10 +1618,10 @@ int virtqueue_avail_bytes(VirtQueue *vq, unsigned int in_bytes,
     return in_bytes <= in_total && out_bytes <= out_total;
 }
 
-static bool virtqueue_map_desc(VirtIODevice *vdev, unsigned int *p_num_sg,
-                               hwaddr *addr, struct iovec *iov,
-                               unsigned int max_num_sg, bool is_write,
-                               hwaddr pa, size_t sz)
+static bool virtqueue_populate_desc(VirtIODevice *vdev, unsigned int *p_num_sg,
+                                    hwaddr *addr, struct iovec *iov,
+                                    unsigned int max_num_sg, bool is_write,
+                                    hwaddr pa, size_t sz, bool map)
 {
     bool ok = false;
     unsigned num_sg = *p_num_sg;
@@ -1622,6 +1629,21 @@ static bool virtqueue_map_desc(VirtIODevice *vdev, unsigned int *p_num_sg,
 
     if (!sz) {
         virtio_error(vdev, "virtio: zero sized buffers are not allowed");
+        goto out;
+    }
+
+    if (!map) {
+        if (num_sg == max_num_sg) {
+            virtio_error(vdev, "virtio: too many write descriptors in "
+                               "indirect table");
+            goto out;
+        }
+
+        iov[num_sg].iov_base = NULL;
+        iov[num_sg].iov_len = sz;
+        addr[num_sg] = pa;
+        num_sg++;
+        ok = true;
         goto out;
     }
 
@@ -1671,6 +1693,10 @@ static void virtqueue_undo_map_desc(AddressSpace *as,
     for (i = 0; i < out_num + in_num; i++) {
         int is_write = i >= out_num;
 
+        if (!iov->iov_base) {
+            iov++;
+            continue;
+        }
         address_space_unmap(as, iov->iov_base, iov->iov_len, is_write, 0);
         iov++;
     }
@@ -1730,7 +1756,7 @@ static void *virtqueue_alloc_element(size_t sz, unsigned out_num, unsigned in_nu
     return elem;
 }
 
-static void *virtqueue_split_pop(VirtQueue *vq, size_t sz)
+static void *virtqueue_split_pop(VirtQueue *vq, size_t sz, bool map)
 {
     unsigned int i, head, max, idx;
     VRingMemoryRegionCaches *caches;
@@ -1814,18 +1840,18 @@ static void *virtqueue_split_pop(VirtQueue *vq, size_t sz)
         bool map_ok;
 
         if (desc.flags & VRING_DESC_F_WRITE) {
-            map_ok = virtqueue_map_desc(vdev, &in_num, addr + out_num,
-                                        iov + out_num,
-                                        VIRTQUEUE_MAX_SIZE - out_num, true,
-                                        desc.addr, desc.len);
+            map_ok = virtqueue_populate_desc(vdev, &in_num, addr + out_num,
+                                             iov + out_num,
+                                             VIRTQUEUE_MAX_SIZE - out_num,
+                                             true, desc.addr, desc.len, map);
         } else {
             if (in_num) {
                 virtio_error(vdev, "Incorrect order for descriptors");
                 goto err_undo_map;
             }
-            map_ok = virtqueue_map_desc(vdev, &out_num, addr, iov,
-                                        VIRTQUEUE_MAX_SIZE, false,
-                                        desc.addr, desc.len);
+            map_ok = virtqueue_populate_desc(vdev, &out_num, addr, iov,
+                                             VIRTQUEUE_MAX_SIZE, false,
+                                             desc.addr, desc.len, map);
         }
         if (!map_ok) {
             goto err_undo_map;
@@ -1877,7 +1903,7 @@ err_undo_map:
     goto done;
 }
 
-static void *virtqueue_packed_pop(VirtQueue *vq, size_t sz)
+static void *virtqueue_packed_pop(VirtQueue *vq, size_t sz, bool map)
 {
     unsigned int i, max;
     VRingMemoryRegionCaches *caches;
@@ -1952,18 +1978,18 @@ static void *virtqueue_packed_pop(VirtQueue *vq, size_t sz)
         bool map_ok;
 
         if (desc.flags & VRING_DESC_F_WRITE) {
-            map_ok = virtqueue_map_desc(vdev, &in_num, addr + out_num,
-                                        iov + out_num,
-                                        VIRTQUEUE_MAX_SIZE - out_num, true,
-                                        desc.addr, desc.len);
+            map_ok = virtqueue_populate_desc(vdev, &in_num, addr + out_num,
+                                             iov + out_num,
+                                             VIRTQUEUE_MAX_SIZE - out_num,
+                                             true, desc.addr, desc.len, map);
         } else {
             if (in_num) {
                 virtio_error(vdev, "Incorrect order for descriptors");
                 goto err_undo_map;
             }
-            map_ok = virtqueue_map_desc(vdev, &out_num, addr, iov,
-                                        VIRTQUEUE_MAX_SIZE, false,
-                                        desc.addr, desc.len);
+            map_ok = virtqueue_populate_desc(vdev, &out_num, addr, iov,
+                                             VIRTQUEUE_MAX_SIZE, false,
+                                             desc.addr, desc.len, map);
         }
         if (!map_ok) {
             goto err_undo_map;
@@ -2034,9 +2060,22 @@ void *virtqueue_pop(VirtQueue *vq, size_t sz)
     }
 
     if (virtio_vdev_has_feature(vq->vdev, VIRTIO_F_RING_PACKED)) {
-        return virtqueue_packed_pop(vq, sz);
+        return virtqueue_packed_pop(vq, sz, true);
     } else {
-        return virtqueue_split_pop(vq, sz);
+        return virtqueue_split_pop(vq, sz, true);
+    }
+}
+
+void *virtqueue_pop_qsg(VirtQueue *vq, size_t sz)
+{
+    if (virtio_device_disabled(vq->vdev)) {
+        return NULL;
+    }
+
+    if (virtio_vdev_has_feature(vq->vdev, VIRTIO_F_RING_PACKED)) {
+        return virtqueue_packed_pop(vq, sz, false);
+    } else {
+        return virtqueue_split_pop(vq, sz, false);
     }
 }
 

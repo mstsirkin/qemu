@@ -57,6 +57,37 @@ void qemu_sglist_destroy(QEMUSGList *qsg)
     memset(qsg, 0, sizeof(*qsg));
 }
 
+bool qemu_sglist_slice(QEMUSGList *dst, const QEMUSGList *src,
+                       dma_addr_t from, dma_addr_t to)
+{
+    dma_addr_t offset = 0;
+    int i;
+
+    if (from > to || to > src->size) {
+        return false;
+    }
+
+    qemu_sglist_init(dst, src->dev, MAX(src->nsg, 1), src->as);
+    for (i = 0; i < src->nsg && offset < to; i++) {
+        dma_addr_t len = src->sg[i].len;
+        dma_addr_t end = offset + len;
+
+        if (end > from) {
+            dma_addr_t start = MAX(offset, from);
+            dma_addr_t stop = MIN(end, to);
+
+            if (start < stop) {
+                qemu_sglist_add(dst, src->sg[i].base + (start - offset),
+                                stop - start);
+            }
+        }
+
+        offset = end;
+    }
+
+    return true;
+}
+
 typedef struct {
     BlockAIOCB common;
     AioContext *ctx;

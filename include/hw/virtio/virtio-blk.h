@@ -20,6 +20,7 @@
 #include "system/iothread.h"
 #include "system/block-backend.h"
 #include "system/block-ram-registrar.h"
+#include "system/dma.h"
 #include "qom/object.h"
 #include "qapi/qapi-types-virtio.h"
 
@@ -85,8 +86,11 @@ typedef struct VirtIOBlockReq {
     IOVDiscardUndo outhdr_undo;
     struct virtio_blk_inhdr *in;
     struct virtio_blk_outhdr out;
+    QEMUSGList qsg;
+    dma_addr_t status_addr;
     QEMUIOVector qiov;
     size_t in_len;
+    bool use_qsg;
     struct VirtIOBlockReq *next;
     struct VirtIOBlockReq *mr_next;
     BlockAcctCookie acct;
