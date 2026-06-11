@@ -3272,7 +3272,29 @@ static MemTxResult flatview_write_continue_step(MemTxAttrs attrs,
         uint8_t *ram_ptr = qemu_ram_ptr_length(mr->ram_block, mr_addr, l,
                                                false, true);
 
-        memmove(ram_ptr, buf, *l);
+        /*
+         * Use a single access with a constant size to allow the
+         * compiler to emit a single load/store instruction.
+         * Use __builtin_memmove to avoid fortify-source wrappers
+         * that can defeat the optimization.
+         */
+        switch (*l) {
+        case 1:
+            __builtin_memmove(ram_ptr, buf, 1);
+            break;
+        case 2:
+            __builtin_memmove(ram_ptr, buf, 2);
+            break;
+        case 4:
+            __builtin_memmove(ram_ptr, buf, 4);
+            break;
+        case 8:
+            __builtin_memmove(ram_ptr, buf, 8);
+            break;
+        default:
+            memmove(ram_ptr, buf, *l);
+            break;
+        }
         invalidate_and_set_dirty(mr, mr_addr, *l);
 
         return MEMTX_OK;
@@ -3365,7 +3387,29 @@ static MemTxResult flatview_read_continue_step(MemTxAttrs attrs, uint8_t *buf,
         uint8_t *ram_ptr = qemu_ram_ptr_length(mr->ram_block, mr_addr, l,
                                                false, false);
 
-        memcpy(buf, ram_ptr, *l);
+        /*
+         * Use a single access with a constant size to allow the
+         * compiler to emit a single load/store instruction.
+         * Use __builtin_memcpy to avoid fortify-source wrappers
+         * that can defeat the optimization.
+         */
+        switch (*l) {
+        case 1:
+            __builtin_memcpy(buf, ram_ptr, 1);
+            break;
+        case 2:
+            __builtin_memcpy(buf, ram_ptr, 2);
+            break;
+        case 4:
+            __builtin_memcpy(buf, ram_ptr, 4);
+            break;
+        case 8:
+            __builtin_memcpy(buf, ram_ptr, 8);
+            break;
+        default:
+            memcpy(buf, ram_ptr, *l);
+            break;
+        }
 
         return MEMTX_OK;
     }
